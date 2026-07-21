@@ -1,0 +1,6 @@
+{
+  "name": "Atividades Criativas Oficial",
+  "description": "Loja digital oficial de materiais pedagógicos prontos para imprimir. Estimule a criatividade, alfabetização e coordenação motora.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

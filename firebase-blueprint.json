@@ -1,0 +1,128 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A digital educational product in the store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "tag": { "type": "string", "enum": ["MAIS VENDIDO", "NOVIDADE", "MAIS PROCURADO", "RECOMENDADO", "GRÁTIS"] },
+        "tagColor": { "type": "string", "enum": ["yellow", "red", "green", "blue"] },
+        "ageRange": { "type": "string" },
+        "pages": { "type": "number" },
+        "format": { "type": "string" },
+        "printSize": { "type": "string" },
+        "price": { "type": "number" },
+        "promoPrice": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "galleryUrls": { "type": "array" },
+        "youtubeUrl": { "type": "string" },
+        "hotmartUrl": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "description": { "type": "string" },
+        "whatYouWillReceive": { "type": "array" },
+        "objectives": { "type": "array" },
+        "howToUse": { "type": "array" },
+        "materialsNeeded": { "type": "array" },
+        "howToPrint": { "type": "string" },
+        "isKit": { "type": "boolean" },
+        "slug": { "type": "string" },
+        "badge": { "type": "string" },
+        "productType": { "type": "string", "enum": ["pago", "gratuito"] },
+        "isActive": { "type": "boolean" },
+        "isHighlight": { "type": "boolean" },
+        "isNew": { "type": "boolean" },
+        "isBestSeller": { "type": "boolean" },
+        "isPromo": { "type": "boolean" },
+        "order": { "type": "number" },
+        "buttonText": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "ageRange", "pages", "format", "printSize", "price", "imageUrl", "galleryUrls", "hotmartUrl", "shortDescription", "description", "whatYouWillReceive", "objectives", "howToUse"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A review or testimonial from a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "city": { "type": "string" },
+        "stars": { "type": "number" },
+        "comment": { "type": "string" },
+        "productName": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "verified": { "type": "boolean" }
+      },
+      "required": ["id", "name", "role", "city", "stars", "comment", "productName", "verified"]
+    },
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "Store site configuration settings",
+      "type": "object",
+      "properties": {
+        "promoText": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "instagramUrl": { "type": "string" },
+        "facebookUrl": { "type": "string" },
+        "youtubeChannelUrl": { "type": "string" },
+        "bannerTitlePrefix": { "type": "string" },
+        "bannerTitleHighlight": { "type": "string" },
+        "bannerDescription": { "type": "string" },
+        "whyChooseUsTitle": { "type": "string" },
+        "whyChooseUsSubtitle": { "type": "string" },
+        "whyChooseUsDescription": { "type": "string" },
+        "whyChooseUsCreativity": { "type": "number" },
+        "whyChooseUsLearning": { "type": "number" },
+        "whyChooseUsPracticality": { "type": "number" },
+        "footerLegalText": { "type": "string" },
+        "hotmartSectionTitle": { "type": "string" },
+        "hotmartSectionDescription": { "type": "string" },
+        "bannerBadge": { "type": "string" },
+        "bannerButtonText": { "type": "string" },
+        "bannerSecondaryButtonText": { "type": "string" },
+        "bannerButtonLink": { "type": "string" },
+        "bannerSecondaryButtonLink": { "type": "string" },
+        "bannerBgColor": { "type": "string" },
+        "bannerMainImageUrl": { "type": "string" },
+        "bannerIsActive": { "type": "boolean" },
+        "hotmartSectionButtonText": { "type": "string" },
+        "hotmartSectionButtonLink": { "type": "string" },
+        "hotmartSectionIsActive": { "type": "boolean" },
+        "newsletterTitle": { "type": "string" },
+        "newsletterDescription": { "type": "string" },
+        "newsletterButtonText": { "type": "string" },
+        "newsletterIsActive": { "type": "boolean" },
+        "footerPolicyLink": { "type": "string" },
+        "footerTermsLink": { "type": "string" },
+        "footerDescription": { "type": "string" },
+        "pinterestUrl": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "openingHours": { "type": "string" }
+      },
+      "required": [
+        "promoText", "contactEmail", "instagramUrl", "facebookUrl", "youtubeChannelUrl",
+        "bannerTitlePrefix", "bannerTitleHighlight", "bannerDescription",
+        "whyChooseUsTitle", "whyChooseUsSubtitle", "whyChooseUsDescription",
+        "whyChooseUsCreativity", "whyChooseUsLearning", "whyChooseUsPracticality",
+        "footerLegalText", "hotmartSectionTitle", "hotmartSectionDescription"
+      ]
+    }
+  },
+  "firestore": {
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of digital educational products"
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of reviews and customer testimonials"
+    },
+    "siteConfig/global": {
+      "schema": "SiteConfig",
+      "description": "Single document containing general store configuration and copy"
+    }
+  }
+}

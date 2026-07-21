@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Default Catch-All Deny Block
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // 2. Global Safety and Validation Helpers
+    function isSignedIn() { 
+      return request.auth != null; 
+    }
+    
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    function isVerifiedEmail() { 
+      return isSignedIn() && request.auth.token.email_verified == true; 
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'atividadesinfantilcontato@gmail.com' ||
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin' &&
+         get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true)
+      );
+    }
+    
+    function incoming() { 
+      return request.resource.data; 
+    }
+    
+    function existing() { 
+      return resource.data; 
+    }
+    
+    // 3. Schema Validators
+    function isValidProduct(data) {
+      return data.get('id', '') is string && data.get('id', '').size() <= 128 &&
+             data.get('name', '') is string && data.get('name', '').size() <= 500 &&
+             data.get('category', '') is string && data.get('category', '').size() <= 250 &&
+             data.get('price', 0) is number && data.get('price', 0) >= 0 &&
+             data.get('pages', 0) is number && data.get('pages', 0) >= 0 &&
+             data.get('format', '') is string && data.get('format', '').size() <= 250 &&
+             data.get('printSize', '') is string && data.get('printSize', '').size() <= 250 &&
+             data.get('imageUrl', '') is string && data.get('imageUrl', '').size() <= 1048576 &&
+             data.get('hotmartUrl', '') is string && data.get('hotmartUrl', '').size() <= 5000 &&
+             data.get('shortDescription', '') is string && data.get('shortDescription', '').size() <= 5000 &&
+             data.get('description', '') is string && data.get('description', '').size() <= 20000 &&
+             data.get('galleryUrls', []) is list && data.get('galleryUrls', []).size() <= 50 &&
+             data.get('whatYouWillReceive', []) is list && data.get('whatYouWillReceive', []).size() <= 100 &&
+             data.get('objectives', []) is list && data.get('objectives', []).size() <= 100 &&
+             data.get('howToUse', []) is list && data.get('howToUse', []).size() <= 100;
+    }
+    
+    function isValidReview(data) {
+      return data.get('id', '') is string && data.get('id', '').size() <= 128 &&
+             data.get('name', '') is string && data.get('name', '').size() <= 100 &&
+             data.get('role', '') is string && data.get('role', '').size() <= 150 &&
+             data.get('city', '') is string && data.get('city', '').size() <= 150 &&
+             data.get('stars', 1) is number && data.get('stars', 1) >= 1 && data.get('stars', 1) <= 5 &&
+             data.get('comment', '') is string && data.get('comment', '').size() <= 2000 &&
+             data.get('productName', '') is string && data.get('productName', '').size() <= 200 &&
+             data.get('verified', false) is bool;
+    }
+    
+    function isValidSiteConfig(data) {
+      return data.get('contactEmail', '') is string && data.get('contactEmail', '').size() <= 1000;
+    }
+
+    // 4. Products Rules
+    match /products/{productId} {
+      allow read: if (resource == null) || (resource.data.get('isActive', true) == true) || isAdmin();
+      allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming());
+      allow update: if isAdmin() && isValidId(productId) && isValidProduct(incoming());
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // 5. Reviews Rules
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(reviewId) && isValidReview(incoming());
+      allow update: if isAdmin() && isValidId(reviewId) && isValidReview(incoming());
+      allow delete: if isAdmin() && isValidId(reviewId);
+    }
+
+    // 6. Site Settings Config Rules
+    match /siteConfig/{configId} {
+      allow read: if true;
+      allow create, update: if isSignedIn() && (request.auth.token.email == 'atividadesinfantilcontato@gmail.com' || isAdmin());
+      allow delete: if false;
+    }
+
+    // 7. Subscribers Rules (Newsletter and free downloads gating)
+    match /subscribers/{subscriberId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // 7. Internal System Admin Roles (Admin Collection)
+    match /debug_uploads/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /debug_admin_test/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if isSignedIn() && request.auth.token.email == 'atividadesinfantilcontato@gmail.com' && request.auth.uid == adminId;
+    }
+
+    // 8. Site Sections Rules
+    match /siteSections/{sectionId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidId(sectionId);
+    }
+
+    // 9. Connection Test Rules
+    match /test/{testId} {
+      allow read: if true;
+    }
+  }
+}
