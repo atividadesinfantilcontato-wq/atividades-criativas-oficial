@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
-import { X, Lock, Mail, Eye, EyeOff, AlertCircle, ArrowLeft } from 'lucide-react';
-import { loginWithGoogle, logoutUser } from '../firebase';
+import React, { useState, useEffect } from 'react';
+import { X, Lock, Mail, Eye, EyeOff, AlertCircle, ArrowLeft, Info, ChevronDown, ChevronUp, CheckCircle2, ShieldCheck, Server } from 'lucide-react';
+import { 
+  loginWithGoogle, 
+  checkGoogleRedirectResult, 
+  loginWithEmail, 
+  validateAdminUser, 
+  logoutUser, 
+  getFriendlyAuthErrorMessage, 
+  auth, 
+  resolvedFirebaseConfig,
+  AdminValidationDetails
+} from '../firebase';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -21,49 +31,155 @@ export default function AdminLoginModal({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
+  
+  // Diagnostic panel states
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [technicalError, setTechnicalError] = useState<string | null>(null);
+  const [validationReason, setValidationReason] = useState<string | null>(null);
+  const [isAdminValidated, setIsAdminValidated] = useState<boolean | null>(null);
+  const [diagnosticDetails, setDiagnosticDetails] = useState<AdminValidationDetails | null>(null);
+
+  // Catch Google Auth Redirect Result on page mount / reload
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    async function processRedirectResult() {
+      try {
+        const redirectUser = await checkGoogleRedirectResult();
+        if (redirectUser && isMounted) {
+          setIsSubmitting(true);
+          const adminCheck = await validateAdminUser(redirectUser);
+          setDiagnosticDetails(adminCheck.details);
+          if (adminCheck.isAdmin) {
+            setIsAdminValidated(true);
+            onLoginSuccess();
+          } else {
+            setIsAdminValidated(false);
+            await logoutUser();
+            const failReason = adminCheck.reason || 'Login autenticado, mas admin não validado no Firestore.';
+            setError(failReason);
+            setValidationReason(failReason);
+            setTechnicalError(`AUTH_NOT_ADMIN: ${failReason}`);
+          }
+        }
+      } catch (err: any) {
+        console.error('Error handling redirect login:', err);
+        if (isMounted) {
+          const friendlyErr = getFriendlyAuthErrorMessage(err);
+          setError(friendlyErr);
+          setTechnicalError(err?.message || String(err));
+        }
+      } finally {
+        if (isMounted) {
+          setIsSubmitting(false);
+        }
+      }
+    }
+
+    processRedirectResult();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, onLoginSuccess]);
 
   if (!isOpen) return null;
 
   const handleGoogleLogin = async () => {
     setIsLoggingInGoogle(true);
     setError('');
+    setInfoMessage('');
+    setTechnicalError(null);
+    setValidationReason(null);
+
     try {
-      const user = await loginWithGoogle();
-      const targetEmail = 'atividadesinfantilcontato@gmail.com';
-      if (user && user.email && user.email.trim().toLowerCase() === targetEmail) {
-        onLoginSuccess();
-      } else {
-        await logoutUser();
-        setError('Este e-mail do Google não tem permissões administrativas de acesso.');
+      const { user, redirectTriggered } = await loginWithGoogle();
+
+      if (redirectTriggered) {
+        setInfoMessage('Popup bloqueado pelo navegador. Redirecionando para login seguro do Google...');
+        return;
+      }
+
+      if (user) {
+        const adminCheck = await validateAdminUser(user);
+        setDiagnosticDetails(adminCheck.details);
+        if (adminCheck.isAdmin) {
+          setIsAdminValidated(true);
+          onLoginSuccess();
+        } else {
+          setIsAdminValidated(false);
+          await logoutUser();
+          const failReason = adminCheck.reason || 'Este e-mail do Google não possui permissões de administrador.';
+          setError(failReason);
+          setValidationReason(failReason);
+          setTechnicalError(`AUTH_NO_ADMIN_ROLE: ${user.email} não é admin.`);
+        }
       }
     } catch (err: any) {
       console.error(err);
-      setError('Erro ao autenticar com o Google. Certifique-se de preencher a permissão do popup.');
+      const friendlyErr = getFriendlyAuthErrorMessage(err);
+      setError(friendlyErr);
+      setTechnicalError(err?.code ? `${err.code}: ${err.message}` : String(err));
     } finally {
       setIsLoggingInGoogle(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfoMessage('');
+    setTechnicalError(null);
+    setValidationReason(null);
+    setIsSubmitting(true);
 
-    // Query custom email/password from local storage overrides
-    const targetEmail = localStorage.getItem('atividades_oficial_admin_email') || 'atividadesinfantilcontato@gmail.com';
-    const targetPassword = localStorage.getItem('atividades_oficial_admin_pass') || 'admin123@';
+    const inputEmail = email.trim().toLowerCase();
 
-    if (email.trim().toLowerCase() === targetEmail.trim().toLowerCase() && password === targetPassword) {
-      onLoginSuccess();
-      setEmail('');
-      setPassword('');
-    } else {
-      setError('E-mail ou senha incorretos. Por favor, verifique seus dados.');
+    try {
+      // 1. Attempt real Firebase Auth login via Email/Password
+      const user = await loginWithEmail(inputEmail, password);
+      
+      // 2. Validate Admin privileges in Firestore
+      const adminCheck = await validateAdminUser(user);
+      setDiagnosticDetails(adminCheck.details);
+
+      if (adminCheck.isAdmin) {
+        setIsAdminValidated(true);
+        onLoginSuccess();
+        setEmail('');
+        setPassword('');
+      } else {
+        setIsAdminValidated(false);
+        await logoutUser();
+        const failReason = adminCheck.reason || 'Login autenticado, mas admin não validado no Firestore.';
+        setError(failReason);
+        setValidationReason(failReason);
+        setTechnicalError(`AUTH_NOT_ADMIN: ${failReason}`);
+      }
+    } catch (err: any) {
+      console.warn('Firebase Email/Pass login notice:', err);
+      const friendlyMsg = getFriendlyAuthErrorMessage(err);
+      setTechnicalError(err?.code ? `${err.code}: ${err.message}` : String(err));
+
+      // Check if user credentials were wrong in Firebase Auth
+      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+        setError('E-mail ou senha incorretos.');
+      } else {
+        setError(friendlyMsg);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
+  const currentAuthUser = auth.currentUser;
+
   const loginCard = (
-    <div className="bg-white rounded-3xl max-w-sm w-full p-6 md:p-8 shadow-2xl border border-slate-100 flex flex-col gap-5 relative z-10 animate-scaleUp text-left">
+    <div className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-slate-100 flex flex-col gap-5 relative z-10 animate-scaleUp text-left max-h-[90vh] overflow-y-auto scrollbar-thin">
       {/* Centered centerpiece logo inside AdminLoginModal card if custom logo exists */}
       {siteConfig?.logoUrl && (
         <div className="flex justify-center items-center py-2 border-b border-slate-100">
@@ -88,7 +204,7 @@ export default function AdminLoginModal({
         {!isFullScreen && (
           <button 
             onClick={onClose}
-            className="p-1.5 hover:bg-slate-150 text-slate-400 hover:text-slate-600 transition-colors rounded-full"
+            className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors rounded-full cursor-pointer"
             aria-label="Fechar"
           >
             <X size={16} />
@@ -98,23 +214,38 @@ export default function AdminLoginModal({
 
       {/* Info label */}
       <p className="text-xs text-slate-500 font-bold leading-relaxed">
-        Entre com as suas credenciais para gerenciar e editar as atividades do site.
+        Entre com as suas credenciais para gerenciar e editar o site.
       </p>
+
+      {/* Info message */}
+      {infoMessage && (
+        <div className="flex items-start gap-2 bg-amber-50 text-amber-800 border border-amber-200 p-3 rounded-xl text-xs font-semibold animate-fadeIn">
+          <Info size={15} className="shrink-0 mt-0.5 text-amber-600" />
+          <span>{infoMessage}</span>
+        </div>
+      )}
 
       {/* Error message */}
       {error && (
         <div className="flex items-start gap-2 bg-rose-50 text-rose-800 border border-rose-200 p-3 rounded-xl text-xs font-semibold animate-shake">
           <AlertCircle size={15} className="shrink-0 mt-0.5 text-rose-600" />
-          <span>{error}</span>
+          <div className="flex flex-col gap-1">
+            <span>{error}</span>
+            {error.includes('Domínio') && (
+              <span className="text-[10px] text-rose-700 font-bold underline">
+                Acesse o console do Firebase &gt; Authentication &gt; Domínios autorizados e adicione o domínio da Vercel.
+              </span>
+            )}
+          </div>
         </div>
       )}
 
       {/* Google Login Button */}
       <button
         type="button"
-        disabled={isLoggingInGoogle}
+        disabled={isLoggingInGoogle || isSubmitting}
         onClick={handleGoogleLogin}
-        className="w-full bg-white hover:bg-slate-50 text-slate-700 font-extrabold text-xs tracking-wider uppercase py-3 rounded-2xl flex items-center justify-center gap-2.5 shadow-md border border-slate-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+        className="w-full bg-white hover:bg-slate-50 text-slate-700 font-extrabold text-xs tracking-wider uppercase py-3 rounded-2xl flex items-center justify-center gap-2.5 shadow-sm border border-slate-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
       >
         <svg className="h-4 w-4" viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
           <path d="M21.35,11.1H12v2.7h5.38c-0.24,1.28 -0.96,2.37 -2.05,3.1v2.58h3.32c1.94,-1.78 3.05,-4.41 3.05,-7.48C21.7,11.97 21.57,11.48 21.35,11.1z" fill="#4285F4" />
@@ -174,7 +305,7 @@ export default function AdminLoginModal({
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
             >
               {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
             </button>
@@ -184,12 +315,113 @@ export default function AdminLoginModal({
         {/* Submit Button */}
         <button
           type="submit"
-          className="bg-[#0E2A79] hover:bg-[#1E4DDB] active:scale-95 transition-all text-white font-extrabold text-xs tracking-wider uppercase py-3.5 rounded-2xl flex items-center justify-center gap-1.5 shadow-lg shadow-[#0E2A79]/10 mt-2 cursor-pointer"
+          disabled={isSubmitting || isLoggingInGoogle}
+          className="bg-[#0E2A79] hover:bg-[#1E4DDB] active:scale-95 transition-all text-white font-extrabold text-xs tracking-wider uppercase py-3.5 rounded-2xl flex items-center justify-center gap-1.5 shadow-lg shadow-[#0E2A79]/10 mt-2 cursor-pointer disabled:opacity-50"
         >
           <Lock size={14} />
-          <span>Acessar Painel</span>
+          <span>{isSubmitting ? 'Verificando...' : 'Acessar Painel'}</span>
         </button>
       </form>
+
+      {/* Diagnostic toggle button */}
+      <div className="border-t border-slate-100 pt-3 mt-1">
+        <button
+          type="button"
+          onClick={() => setShowDiagnostic(!showDiagnostic)}
+          className="w-full flex items-center justify-between text-[11px] font-bold text-slate-500 hover:text-slate-800 py-1 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-1.5">
+            <Server size={13} className="text-slate-400" />
+            <span>Ver diagnóstico do login</span>
+          </div>
+          {showDiagnostic ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showDiagnostic && (
+          <div className="mt-2.5 p-3.5 bg-slate-900 text-slate-200 rounded-2xl text-[10px] space-y-2 animate-fadeIn font-mono">
+            <div className="flex justify-between items-start border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">UID Autenticado:</span>
+              <span className="text-amber-300 font-semibold break-all text-right">
+                {diagnosticDetails?.uid || currentAuthUser?.uid || 'Nenhum'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">E-mail Autenticado:</span>
+              <span className="text-slate-100 font-semibold truncate max-w-[190px]">
+                {diagnosticDetails?.email || currentAuthUser?.email || 'Nenhum'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-start border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Caminho no Firestore:</span>
+              <span className="text-sky-300 font-semibold break-all text-right">
+                {diagnosticDetails?.path || (currentAuthUser ? `admins/${currentAuthUser.uid}` : 'admins/pTQWbjLMsjQnXK6HaPTQfwJBybU2')}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Database ID:</span>
+              <span className="text-sky-300 font-semibold truncate max-w-[190px]">
+                {diagnosticDetails?.databaseId || resolvedFirebaseConfig.firestoreDatabaseId || 'default'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">admins/&#123;uid&#125; Encontrado:</span>
+              <span className={diagnosticDetails?.docFound ? "text-emerald-400 font-bold" : (diagnosticDetails ? "text-rose-400 font-bold" : "text-slate-400")}>
+                {diagnosticDetails ? (diagnosticDetails.docFound ? 'SIM' : 'NÃO') : 'Pendente'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">active:</span>
+              <span className={diagnosticDetails?.active === true ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                {diagnosticDetails?.active !== undefined && diagnosticDetails?.active !== null 
+                  ? (diagnosticDetails.active ? 'true' : 'false') 
+                  : 'Não definido'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">role:</span>
+              <span className={diagnosticDetails?.role === 'admin' ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                {diagnosticDetails?.role || 'Não definido'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">email no documento:</span>
+              <span className="text-slate-100 font-semibold truncate max-w-[190px]">
+                {diagnosticDetails?.docEmail || 'Não definido'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Admin Validado:</span>
+              <span className={isAdminValidated === true ? "text-emerald-400 font-bold" : (isAdminValidated === false ? "text-rose-400 font-bold" : "text-slate-400")}>
+                {isAdminValidated === true ? 'SIM' : (isAdminValidated === false ? 'NÃO' : 'Pendente')}
+              </span>
+            </div>
+
+            {(technicalError || validationReason) && (
+              <div className="p-2 bg-rose-950/80 border border-rose-800/80 text-rose-200 rounded-xl leading-relaxed break-words">
+                <span className="font-bold block text-rose-300">Erro Técnico Real:</span>
+                {validationReason || technicalError}
+              </div>
+            )}
+
+            <div className="pt-1 text-[9px] text-slate-400 font-sans leading-relaxed">
+              <strong className="text-amber-300">Domínios autorizados no Firebase Auth:</strong>
+              <div className="mt-0.5 text-slate-300 select-all font-mono bg-slate-950 p-1.5 rounded-lg border border-slate-800">
+                atividades-criativas-oficial.vercel.app<br />
+                atividadescriativasoficial.com.br<br />
+                www.atividadescriativasoficial.com.br
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Back button for full screen mode */}
       {isFullScreen && (
@@ -199,7 +431,7 @@ export default function AdminLoginModal({
             window.location.hash = ''; // reset hash
             onClose();
           }}
-          className="text-[#0E2A79] hover:text-[#FF7A00] text-xs font-black uppercase flex items-center justify-center gap-1.5 mt-2 transition-all cursor-pointer"
+          className="text-[#0E2A79] hover:text-[#FF7A00] text-xs font-black uppercase flex items-center justify-center gap-1.5 mt-1 transition-all cursor-pointer"
         >
           <ArrowLeft size={13} />
           <span>Voltar para a Loja</span>
@@ -221,10 +453,11 @@ export default function AdminLoginModal({
     <div className="fixed inset-0 z-50 overflow-hidden flex items-center justify-center p-4">
       {/* Background Overlay */}
       <div 
-        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm transition-opacity animate-fadeIn"
+        className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-fadeIn"
         onClick={onClose}
       ></div>
       {loginCard}
     </div>
   );
 }
+

@@ -5,7 +5,7 @@ import { Product, CartItem, Review, SiteConfig, sanitizeProduct } from './types'
 import { onAuthStateChanged } from 'firebase/auth';
 import { compressImage, ensureSafeProductPayload } from './utils/imageCompressor';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, serverTimestamp, getDoc } from 'firebase/firestore';
-import { db, auth, handleFirestoreError, logoutUser, OperationType } from './firebase';
+import { db, auth, handleFirestoreError, logoutUser, validateAdminUser, OperationType } from './firebase';
 
 // Import all sections and components
 import PromoBar from './components/PromoBar';
@@ -196,13 +196,19 @@ export default function App() {
 
   // Sync authentication state from Firebase in real-time
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && user.email === 'atividadesinfantilcontato@gmail.com') {
-        setIsLoggedIn(true);
-        localStorage.setItem('atividades_oficial_logged_in', 'true');
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const adminCheck = await validateAdminUser(user);
+        if (adminCheck.isAdmin) {
+          setIsLoggedIn(true);
+          localStorage.setItem('atividades_oficial_logged_in', 'true');
+        } else {
+          setIsLoggedIn(false);
+          localStorage.removeItem('atividades_oficial_logged_in');
+        }
       } else {
-        setIsLoggedIn(false);
-        localStorage.removeItem('atividades_oficial_logged_in');
+        const cachedLoggedIn = localStorage.getItem('atividades_oficial_logged_in') === 'true';
+        setIsLoggedIn(cachedLoggedIn);
       }
     });
     return () => unsubscribe();
@@ -245,6 +251,87 @@ export default function App() {
     if (path.startsWith('/admin') || hash === '#admin') return 'admin';
     return 'shop';
   });
+
+  // Dynamic Browser Tab Title and SEO Meta Tags Synchronization Effect
+  useEffect(() => {
+    const defaultSiteName = siteConfig.siteName || 'Atividades Criativas Oficial';
+    const siteSeoTitle = siteConfig.seoTitle || `${defaultSiteName} | Materiais pedagógicos em PDF para imprimir`;
+
+    const currentProduct = activeProductId ? products.find(p => p.id === activeProductId) : null;
+    const displayTitle = currentProduct 
+      ? `${currentProduct.name} | ${defaultSiteName}`
+      : siteSeoTitle;
+
+    // Set page title (tab name)
+    document.title = displayTitle;
+
+    // Helper to safely set meta tags
+    const setMetaTag = (nameOrProperty: string, value: string | undefined, isProperty = false) => {
+      if (!value) return;
+      const attribute = isProperty ? 'property' : 'name';
+      let element = document.querySelector(`meta[${attribute}="${nameOrProperty}"]`);
+      if (!element) {
+        element = document.createElement('meta');
+        element.setAttribute(attribute, nameOrProperty);
+        document.head.appendChild(element);
+      }
+      element.setAttribute('content', value);
+    };
+
+    // Helper for canonical link
+    const setCanonicalLink = (url: string | undefined) => {
+      if (!url) return;
+      let link = document.querySelector('link[rel="canonical"]') as HTMLLinkElement;
+      if (!link) {
+        link = document.createElement('link');
+        link.setAttribute('rel', 'canonical');
+        document.head.appendChild(link);
+      }
+      link.setAttribute('href', url);
+    };
+
+    const description = currentProduct
+      ? (currentProduct.shortDescription || currentProduct.description || siteConfig.seoDescription)
+      : siteConfig.seoDescription;
+
+    const keywords = siteConfig.seoKeywords;
+    const imageUrl = currentProduct
+      ? (currentProduct.mainImageUrl || siteConfig.seoImageUrl)
+      : siteConfig.seoImageUrl;
+    const author = siteConfig.seoAuthor || defaultSiteName;
+    const canonicalUrl = siteConfig.canonicalUrl || 'https://atividadescriativasoficial.com.br';
+
+    setMetaTag('description', description);
+    setMetaTag('keywords', keywords);
+    setMetaTag('author', author);
+
+    // Open Graph Tags
+    setMetaTag('og:title', displayTitle, true);
+    setMetaTag('og:description', description, true);
+    setMetaTag('og:image', imageUrl, true);
+    setMetaTag('og:url', canonicalUrl, true);
+    setMetaTag('og:type', 'website', true);
+    setMetaTag('og:site_name', defaultSiteName, true);
+
+    // Twitter Card Tags
+    setMetaTag('twitter:card', 'summary_large_image');
+    setMetaTag('twitter:title', displayTitle);
+    setMetaTag('twitter:description', description);
+    setMetaTag('twitter:image', imageUrl);
+
+    setCanonicalLink(canonicalUrl);
+
+    // Dynamic favicon update if defined
+    if (siteConfig.faviconUrl) {
+      let faviconLink = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
+      if (!faviconLink) {
+        faviconLink = document.createElement('link');
+        faviconLink.setAttribute('rel', 'icon');
+        document.head.appendChild(faviconLink);
+      }
+      faviconLink.setAttribute('href', siteConfig.faviconUrl);
+    }
+  }, [siteConfig, activeProductId, products]);
 
   // Bidirectional routing & URL Synchronization Effect
   useEffect(() => {

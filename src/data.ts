@@ -536,6 +536,16 @@ export const INITIAL_SITE_CONFIG: SiteConfig = {
   activityGroupImageStoragePath: '',
   activityGroupButtonText: 'Entrar no grupo',
   activityGroupButtonUrl: '#',
-  activityGroupOpenInNewTab: true
+  activityGroupOpenInNewTab: true,
+
+  // SEO e Google Configuration Defaults
+  siteName: 'Atividades Criativas Oficial',
+  seoTitle: 'Atividades Criativas Oficial | Materiais pedagógicos em PDF para imprimir',
+  seoDescription: 'Materiais pedagógicos digitais em PDF para imprimir e aplicar com crianças. Atividades criativas para alfabetização, coordenação motora, matemática e aprendizagem lúdica.',
+  seoKeywords: 'atividades pedagógicas, atividades para imprimir, atividades infantis, PDF infantil, alfabetização, coordenação motora, atividades criativas, materiais pedagógicos, atividades escolares, educação infantil',
+  seoImageUrl: '',
+  seoImageStoragePath: '',
+  seoAuthor: 'Atividades Criativas Oficial',
+  canonicalUrl: 'https://atividadescriativasoficial.com.br'
 };
 

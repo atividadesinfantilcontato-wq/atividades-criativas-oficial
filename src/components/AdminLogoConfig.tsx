@@ -241,11 +241,19 @@ export default function AdminLogoConfig({
             body: formData
           });
 
-          if (!response.ok) {
-            throw new Error(`R2 upload failed with status ${response.status}`);
+          const contentType = response.headers.get("content-type") || "";
+          let resData: any = {};
+          if (contentType.includes("application/json")) {
+            resData = await response.json();
+          } else {
+            const textData = await response.text();
+            throw new Error(`R2 upload failed with status ${response.status}: ${textData.substring(0, 100)}`);
           }
 
-          const resData = await response.json();
+          if (!response.ok) {
+            throw new Error(resData.error || `R2 upload failed with status ${response.status}`);
+          }
+
           downloadUrl = resData.url;
           keyPath = resData.key;
         } catch (r2Error) {
@@ -265,15 +273,22 @@ export default function AdminLogoConfig({
             ]);
           };
 
-          const uploadPromise = (async () => {
-            const result = await uploadBytes(storageRef, file);
-            setUploadProgress(prev => ({ ...prev, [type]: 80 }));
-            const url = await getDownloadURL(result.ref);
-            return url;
-          })();
+          try {
+            const uploadPromise = (async () => {
+              const result = await uploadBytes(storageRef, file);
+              setUploadProgress(prev => ({ ...prev, [type]: 80 }));
+              const url = await getDownloadURL(result.ref);
+              return url;
+            })();
 
-          downloadUrl = await withTimeout(uploadPromise, 20000, "Envio da logo");
-          keyPath = storagePath;
+            downloadUrl = await withTimeout(uploadPromise, 20000, "Envio da logo");
+            keyPath = storagePath;
+          } catch (fbErr: any) {
+            console.warn('[Diagnostic] Firebase Storage logo upload failed, using compressed Data URL fallback:', fbErr);
+            const compressedDataUrl = await compressImage(file, 800, 0.82);
+            downloadUrl = compressedDataUrl;
+            keyPath = `dataurl_${Date.now()}`;
+          }
         }
 
         setUploadProgress(prev => ({ ...prev, [type]: 100 }));

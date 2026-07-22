@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { 
-  Phone, Share2, Shield, Mail, Award, BookOpen, Lock, Check, ChevronLeft, Save, AlertCircle, Sparkles, User, Image, Users
+  Phone, Share2, Shield, Mail, Award, BookOpen, Lock, Check, ChevronLeft, Save, AlertCircle, Sparkles, User, Image, Users, Globe
 } from 'lucide-react';
 import { SiteConfig, Product } from '../types';
 import AdminLogoConfig from './AdminLogoConfig';
@@ -16,7 +16,7 @@ interface AdminSettingsProps {
   products?: Product[];
 }
 
-type SettingsSubsection = 'cards' | 'contacts' | 'socials' | 'hotmart' | 'newsletter' | 'brand' | 'policies' | 'security' | 'logo_identity' | 'author' | 'site_images' | 'activity_group';
+type SettingsSubsection = 'cards' | 'contacts' | 'socials' | 'hotmart' | 'newsletter' | 'brand' | 'policies' | 'security' | 'logo_identity' | 'author' | 'site_images' | 'activity_group' | 'seo_google';
 
 export default function AdminSettings({
   siteConfig,
@@ -290,6 +290,23 @@ export default function AdminSettings({
               <h3 className="font-extrabold text-slate-800 text-sm">Grupo de Atividades</h3>
               <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
                 Editar título, descrição, nota, imagem, botão e link do grupo de atividades.
+              </p>
+            </div>
+          </button>
+
+          {/* Card 12: SEO e Google */}
+          <button
+            type="button"
+            onClick={() => setActiveSubsection('seo_google')}
+            className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-2xs hover:shadow-lg hover:border-[#1E4DDB]/20 text-left transition-all cursor-pointer flex flex-col justify-between group min-h-[160px]"
+          >
+            <div className="space-y-3">
+              <div className="p-2.5 bg-sky-50 text-sky-600 rounded-xl w-fit group-hover:bg-sky-600 group-hover:text-white transition-all">
+                <Globe size={18} />
+              </div>
+              <h3 className="font-extrabold text-slate-800 text-sm">SEO e Google</h3>
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                Cadastrar título SEO, descrição, palavras-chave e imagem de compartilhamento.
               </p>
             </div>
           </button>
@@ -928,6 +945,119 @@ export default function AdminSettings({
           >
             <Save size={14} />
             <span>Salvar Alterações</span>
+          </button>
+        </form>
+      )}
+
+      {/* 13. SEO e Google Form */}
+      {activeSubsection === 'seo_google' && (
+        <form onSubmit={handleSave} className="bg-white p-6 md:p-8 rounded-3xl border border-slate-200/60 space-y-6">
+          <div className="border-b border-slate-100 pb-4">
+            <h3 className="font-black text-slate-800 text-base">Otimização para Busca (SEO) e Compartilhamento</h3>
+            <p className="text-xs text-slate-400 font-medium mt-1">
+              Defina as informações que o Google e redes sociais exibem ao indexar ou compartilhar o seu site.
+            </p>
+          </div>
+
+          <div className="space-y-5">
+            {/* Nome do Site */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">Nome Oficial do Site</label>
+              <input
+                type="text"
+                value={config.siteName || ''}
+                onChange={(e) => handleChange('siteName', e.target.value)}
+                placeholder="Atividades Criativas Oficial"
+                className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-semibold"
+              />
+            </div>
+
+            {/* Título SEO */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">Título SEO da Aba / Buscas (&lt;title&gt;)</label>
+              <input
+                type="text"
+                value={config.seoTitle || ''}
+                onChange={(e) => handleChange('seoTitle', e.target.value)}
+                placeholder="Atividades Criativas Oficial | Materiais pedagógicos em PDF para imprimir"
+                className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-semibold"
+              />
+              <span className="text-[10px] text-slate-400 font-medium">Recomendado: 50 a 60 caracteres para não ser cortado no Google.</span>
+            </div>
+
+            {/* Descrição SEO */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">Descrição SEO (Meta Description)</label>
+              <textarea
+                rows={3}
+                value={config.seoDescription || ''}
+                onChange={(e) => handleChange('seoDescription', e.target.value)}
+                placeholder="Materiais pedagógicos digitais em PDF para imprimir e aplicar com crianças. Atividades criativas para alfabetização..."
+                className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-medium leading-relaxed"
+              />
+              <span className="text-[10px] text-slate-400 font-medium">Recomendado: 120 a 160 caracteres com resumo claro da loja.</span>
+            </div>
+
+            {/* Palavras-chave */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">Palavras-chave (Meta Keywords - separadas por vírgula)</label>
+              <textarea
+                rows={2}
+                value={config.seoKeywords || ''}
+                onChange={(e) => handleChange('seoKeywords', e.target.value)}
+                placeholder="atividades pedagógicas, atividades para imprimir, alfabetização, PDF infantil, materiais escolares"
+                className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              {/* Autor */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">Autor / Marca (Meta Author)</label>
+                <input
+                  type="text"
+                  value={config.seoAuthor || ''}
+                  onChange={(e) => handleChange('seoAuthor', e.target.value)}
+                  placeholder="Atividades Criativas Oficial"
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-semibold"
+                />
+              </div>
+
+              {/* URL Canônica */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold">URL Canônica Oficial</label>
+                <input
+                  type="url"
+                  value={config.canonicalUrl || ''}
+                  onChange={(e) => handleChange('canonicalUrl', e.target.value)}
+                  placeholder="https://atividadescriativasoficial.com.br"
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs p-3 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#1E4DDB] font-semibold"
+                />
+              </div>
+            </div>
+
+            {/* Imagem de Compartilhamento (Open Graph) */}
+            <div className="space-y-2 pt-2">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold block">Imagem para Redes Sociais / WhatsApp (Cloudflare R2)</label>
+              <ImageFieldEditor
+                field="seoImageUrl"
+                label="Imagem de Compartilhamento (OG Image)"
+                recommendation="Proporção ideal: 1200x630 pixels em PNG ou WebP. Esta imagem aparece ao compartilhar o link do site no WhatsApp, Facebook ou Instagram."
+                siteConfig={config}
+                onUpdate={(updatedConfig) => setConfig(updatedConfig)}
+                onSuccess={onSuccess}
+                storagePathPrefix="site/seo"
+                objectFit="cover"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="flex items-center gap-2 px-6 py-3 bg-[#12368F] hover:bg-[#1E4DDB] text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer mt-4"
+          >
+            <Save size={14} />
+            <span>Salvar Configurações SEO</span>
           </button>
         </form>
       )}

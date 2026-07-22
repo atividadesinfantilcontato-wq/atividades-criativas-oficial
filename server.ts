@@ -64,7 +64,7 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     const token = authHeader.split("Bearer ")[1];
 
     // Authenticate with Firebase Auth REST API
-    const apiKey = firebaseConfig.apiKey;
+    const apiKey = process.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey;
     if (!apiKey) {
       return res.status(500).json({ error: "Chave de API do Firebase não configurada no servidor." });
     }
@@ -87,23 +87,24 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     }
 
     const uid = user.localId;
+    const userEmail = (user.email || "").toLowerCase();
+    const isOfficialAdmin = userEmail === "atividadesinfantilcontato@gmail.com";
 
     // 2. Verify admin status via Firestore REST API using the user's token
-    const databaseId = firebaseConfig.firestoreDatabaseId;
-    const projectId = firebaseConfig.projectId;
-    if (!projectId || !databaseId) {
-      return res.status(500).json({ error: "Configuração do Firestore ausente." });
-    }
+    const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || firebaseConfig.databaseId || "(default)";
+    const projectId = process.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId;
+    
+    if (projectId && databaseId && !isOfficialAdmin) {
+      const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/admins/${uid}`;
+      const firestoreResponse = await fetch(firestoreUrl, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
 
-    const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/admins/${uid}`;
-    const firestoreResponse = await fetch(firestoreUrl, {
-      headers: {
-        "Authorization": `Bearer ${token}`
+      if (!firestoreResponse.ok) {
+        return res.status(403).json({ error: "Acesso negado. Apenas administradores cadastrados podem fazer upload." });
       }
-    });
-
-    if (!firestoreResponse.ok) {
-      return res.status(403).json({ error: "Acesso negado. Apenas administradores cadastrados podem fazer upload." });
     }
 
     // 3. Check R2 Configuration and detail missing variables
@@ -176,6 +177,20 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     console.error("Erro no r2-upload endpoint:", err);
     res.status(500).json({ error: err.message || "Erro interno do servidor durante o upload R2." });
   }
+});
+
+// API Error Handler - Always return JSON for errors in /api routes
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.path.startsWith("/api/")) {
+    console.error("Express API Error:", err);
+    return res.status(err.status || 500).json({ error: err.message || "Erro interno no servidor de API." });
+  }
+  next(err);
+});
+
+// Catch-all 404 for unhandled API routes so they return JSON instead of index.html
+app.all("/api/*", (req, res) => {
+  res.status(404).json({ error: `Endpoint API não encontrado: ${req.method} ${req.path}` });
 });
 
 // Vite middleware and static files setup

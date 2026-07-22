@@ -701,7 +701,15 @@ export default function AdminProductForm({
         throw new Error("Endpoint /api/r2-upload não encontrado.");
       }
 
-      const resData = await uploadRes.json();
+      const uploadContentType = uploadRes.headers.get("content-type") || "";
+      let resData: any = {};
+      if (uploadContentType.includes("application/json")) {
+        resData = await uploadRes.json();
+      } else {
+        const textData = await uploadRes.text();
+        throw new Error(`Servidor de upload retornou resposta não-JSON (${uploadRes.status}): ${textData.substring(0, 100)}`);
+      }
+
       if (!uploadRes.ok) {
         throw new Error(resData.error || `Servidor retornou status ${uploadRes.status}`);
       }
@@ -1016,25 +1024,60 @@ export default function AdminProductForm({
     if (!user) {
       throw new Error("Você precisa estar logado como administrador.");
     }
-    const idToken = await user.getIdToken();
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("customPath", customPath);
 
-    const response = await fetch("/api/r2-upload", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${idToken}`
-      },
-      body: formData
-    });
+    try {
+      const idToken = await user.getIdToken();
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("customPath", customPath);
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `Erro no upload R2: ${response.status}`);
+      const response = await fetch("/api/r2-upload", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: formData
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      let resData: any = {};
+      if (contentType.includes("application/json")) {
+        resData = await response.json();
+      } else {
+        const textData = await response.text();
+        throw new Error(`Servidor R2 retornou resposta não-JSON (${response.status}): ${textData.substring(0, 100)}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(resData.error || `Erro no upload R2: ${response.status}`);
+      }
+
+      return resData;
+    } catch (r2Err: any) {
+      console.warn('[Diagnostic] R2 upload failed, trying Firebase Storage as fallback:', r2Err);
+      try {
+        const timestamp = Date.now();
+        const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const storagePath = `${customPath}/${timestamp}_${safeName}`;
+        const storageRef = ref(storage, storagePath);
+
+        const uploadPromise = (async () => {
+          const result = await uploadBytes(storageRef, file);
+          const url = await getDownloadURL(result.ref);
+          return { url, key: storagePath };
+        })();
+
+        return await withTimeout(uploadPromise, 20000, "Envio para o Firebase Storage");
+      } catch (fbErr: any) {
+        console.warn('[Diagnostic] Firebase Storage upload also failed, using compressed Data URL:', fbErr);
+        try {
+          const compressedDataUrl = await compressImage(file, 1000, 0.82);
+          return { url: compressedDataUrl, key: `dataurl_${Date.now()}` };
+        } catch (compressErr) {
+          throw new Error(`Falha ao enviar a imagem (R2 e Firebase) e na compressão: ${r2Err.message || r2Err}`);
+        }
+      }
     }
-
-    return await response.json();
   };
 
   const handleSaveProduct = async (saveAsActive: boolean) => {

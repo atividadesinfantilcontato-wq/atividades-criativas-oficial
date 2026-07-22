@@ -137,9 +137,12 @@ export default function ImageFieldEditor({
       let downloadUrl = '';
       let storagePath = '';
 
-      if (field === 'activityGroupImageUrl' || field === 'authorPhotoUrl') {
+      if (field === 'activityGroupImageUrl' || field === 'authorPhotoUrl' || field === 'seoImageUrl') {
         try {
-          const isAuthor = field === 'authorPhotoUrl';
+          let customPath = "site/seo";
+          if (field === 'authorPhotoUrl') customPath = "site/author";
+          if (field === 'activityGroupImageUrl') customPath = "site/activity-group";
+
           setUploadStepText('Enviando para o Cloudflare R2...');
           setUploadProgress(20);
 
@@ -156,7 +159,7 @@ export default function ImageFieldEditor({
           const formData = new FormData();
           const fileToPost = new File([uploadBlob], file.name, { type: uploadBlob.type });
           formData.append("file", fileToPost);
-          formData.append("customPath", isAuthor ? "site/author" : "site/activity-group");
+          formData.append("customPath", customPath);
 
           const response = await fetch("/api/r2-upload", {
             method: "POST",
@@ -170,7 +173,15 @@ export default function ImageFieldEditor({
             throw new Error("O servidor de upload R2 não está disponível. Por favor, verifique se o R2 está configurado.");
           }
 
-          const resData = await response.json();
+          const contentType = response.headers.get("content-type") || "";
+          let resData: any = {};
+          if (contentType.includes("application/json")) {
+            resData = await response.json();
+          } else {
+            const textData = await response.text();
+            throw new Error(`Servidor de upload retornou resposta inválida (${response.status}): ${textData.substring(0, 120)}`);
+          }
+
           if (!response.ok) {
             throw new Error(resData.error || `Erro de upload: ${response.status}`);
           }
@@ -180,8 +191,34 @@ export default function ImageFieldEditor({
           setUploadProgress(100);
           console.log(`[Diagnostic] Upload completed successfully via Cloudflare R2: ${downloadUrl}`);
         } catch (uploadError: any) {
-          console.error('[Diagnostic] Cloudflare R2 upload failed:', uploadError);
-          throw new Error(uploadError.message || 'Erro ao enviar imagem para o Cloudflare R2.');
+          console.warn('[Diagnostic] Cloudflare R2 upload failed, attempting Firebase Storage fallback:', uploadError);
+          try {
+            setUploadStepText('Enviando para o Firebase Storage...');
+            setUploadProgress(50);
+            const fileExt = file.name.split('.').pop() || 'jpg';
+            const uniqueName = `${Date.now()}_image.${fileExt}`;
+            storagePath = `${storagePathPrefix}/${uniqueName}`;
+            const storageRef = ref(storage, storagePath);
+
+            const uploadPromise = (async () => {
+              const result = await uploadBytes(storageRef, uploadBlob);
+              setUploadProgress(80);
+              const url = await getDownloadURL(result.ref);
+              setUploadProgress(100);
+              return url;
+            })();
+
+            downloadUrl = await withTimeout(uploadPromise, 20000, "Envio para o Firebase");
+          } catch (fbErr: any) {
+            console.warn('[Diagnostic] Firebase Storage fallback also failed, using compressed Data URL:', fbErr);
+            if (localBase64DataUrl) {
+              downloadUrl = localBase64DataUrl;
+              storagePath = `dataurl_${Date.now()}`;
+              setUploadProgress(100);
+            } else {
+              throw new Error(`Falha no upload R2 e Firebase: ${uploadError.message || uploadError}`);
+            }
+          }
         }
       } else {
         try {
@@ -209,8 +246,14 @@ export default function ImageFieldEditor({
           downloadUrl = await withTimeout(uploadPromise, timeoutMs, "Envio da foto");
           console.log(`[Diagnostic] 4. Upload completed successfully via Firebase Storage`);
         } catch (uploadError: any) {
-          console.error('[Diagnostic] Firebase Storage upload failed:', uploadError);
-          throw uploadError;
+          console.warn('[Diagnostic] Firebase Storage upload failed, using compressed Data URL fallback:', uploadError);
+          if (localBase64DataUrl) {
+            downloadUrl = localBase64DataUrl;
+            storagePath = `dataurl_${Date.now()}`;
+            setUploadProgress(100);
+          } else {
+            throw uploadError;
+          }
         }
       }
 
@@ -239,6 +282,8 @@ export default function ImageFieldEditor({
         storagePathField = 'footerImageStoragePath';
       } else if (field === 'activityGroupImageUrl') {
         storagePathField = 'activityGroupImageStoragePath';
+      } else if (field === 'seoImageUrl') {
+        storagePathField = 'seoImageStoragePath';
       }
 
       const savePromise = (async () => {

@@ -350,5 +350,15 @@ export interface SiteConfig {
   activityGroupButtonText?: string;
   activityGroupButtonUrl?: string;
   activityGroupOpenInNewTab?: boolean;
+
+  // SEO e Google Configuration Fields
+  siteName?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  seoKeywords?: string;
+  seoImageUrl?: string;
+  seoImageStoragePath?: string;
+  seoAuthor?: string;
+  canonicalUrl?: string;
 }
 
