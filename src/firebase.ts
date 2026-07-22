@@ -16,21 +16,52 @@ import firebaseConfigJson from '../firebase-applet-config.json';
 // Resolved config merging Vercel environment variables and applet configuration
 const metaEnv = ((import.meta as any).env || {}) as Record<string, string | undefined>;
 
+const envProjectId = metaEnv.VITE_FIREBASE_PROJECT_ID;
+const envDatabaseId = metaEnv.VITE_FIREBASE_DATABASE_ID;
+
+let finalProjectId = envProjectId || firebaseConfigJson.projectId;
+let finalDatabaseId = envDatabaseId || (firebaseConfigJson as any).firestoreDatabaseId || (firebaseConfigJson as any).databaseId;
+
+// If envProjectId was wrongly populated with the database ID (starts with 'ai-studio-'), swap or correct it
+if (finalProjectId && finalProjectId.startsWith('ai-studio-')) {
+  finalDatabaseId = finalProjectId;
+  finalProjectId = (envDatabaseId && !envDatabaseId.startsWith('ai-studio-')) ? envDatabaseId : firebaseConfigJson.projectId || 'operating-flame-7dzmz';
+}
+
+if (!finalProjectId || finalProjectId === '(default)' || finalProjectId === 'default') {
+  finalProjectId = 'operating-flame-7dzmz';
+}
+
+if (!finalDatabaseId || finalDatabaseId === '(default)' || finalDatabaseId === 'default' || finalDatabaseId === 'operating-flame-7dzmz') {
+  finalDatabaseId = 'ai-studio-atividadescriati-64c09b83-865c-49d3-896f-bce4d623533c';
+}
+
 export const resolvedFirebaseConfig = {
   apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey,
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain,
-  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId,
-  firestoreDatabaseId: metaEnv.VITE_FIREBASE_DATABASE_ID || (firebaseConfigJson as any).firestoreDatabaseId || (firebaseConfigJson as any).databaseId,
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket,
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || `${finalProjectId}.firebaseapp.com`,
+  projectId: finalProjectId,
+  firestoreDatabaseId: finalDatabaseId,
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket || `${finalProjectId}.firebasestorage.app`,
   messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
   appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
 };
 
 // Initialize Firebase app
-export const app = initializeApp(resolvedFirebaseConfig);
+export const app = initializeApp({
+  apiKey: resolvedFirebaseConfig.apiKey,
+  authDomain: resolvedFirebaseConfig.authDomain,
+  projectId: resolvedFirebaseConfig.projectId,
+  storageBucket: resolvedFirebaseConfig.storageBucket,
+  messagingSenderId: resolvedFirebaseConfig.messagingSenderId,
+  appId: resolvedFirebaseConfig.appId,
+});
 
-// Initialize Firestore database (using custom database ID and ignoring undefined fields)
-export const db = initializeFirestore(app, { ignoreUndefinedProperties: true }, resolvedFirebaseConfig.firestoreDatabaseId);
+// Initialize Firestore database (using custom named database ID)
+export const db = initializeFirestore(
+  app, 
+  { ignoreUndefinedProperties: true }, 
+  resolvedFirebaseConfig.firestoreDatabaseId
+);
 
 // Initialize Storage using the configured bucket
 export const storage = getStorage(app);
@@ -58,10 +89,10 @@ export function getFriendlyAuthErrorMessage(error: any): string {
     return 'Usuário não encontrado.';
   }
   if (code === 'auth/operation-not-allowed') {
-    return 'O método E-mail/Senha não está habilitado no Firebase Authentication.';
+    return 'Para entrar com senha, é necessário ativar E-mail/Senha no Firebase Authentication usando uma conta proprietária do projeto.';
   }
   if (code === 'auth/unauthorized-domain' || message.includes('unauthorized domain')) {
-    return 'Domínio da Vercel não autorizado no Firebase Authentication.';
+    return 'Para usar login com Google no domínio publicado, o domínio precisa ser autorizado no Firebase Authentication por uma conta proprietária.';
   }
   if (code === 'auth/popup-blocked') {
     return 'Popup bloqueado. Redirecionando para login do Google...';

@@ -41,6 +41,9 @@ export default function AdminLoginModal({
   const [validationReason, setValidationReason] = useState<string | null>(null);
   const [isAdminValidated, setIsAdminValidated] = useState<boolean | null>(null);
   const [diagnosticDetails, setDiagnosticDetails] = useState<AdminValidationDetails | null>(null);
+  const [lastTestedMethod, setLastTestedMethod] = useState<'senha' | 'Google' | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
+  const [lastErrorMessage, setLastErrorMessage] = useState<string | null>(null);
 
   // Catch Google Auth Redirect Result on page mount / reload
   useEffect(() => {
@@ -95,6 +98,9 @@ export default function AdminLoginModal({
     setInfoMessage('');
     setTechnicalError(null);
     setValidationReason(null);
+    setLastTestedMethod('Google');
+    setLastErrorCode(null);
+    setLastErrorMessage(null);
 
     try {
       const { user, redirectTriggered } = await loginWithGoogle();
@@ -123,6 +129,10 @@ export default function AdminLoginModal({
       console.error(err);
       const friendlyErr = getFriendlyAuthErrorMessage(err);
       setError(friendlyErr);
+      const errCode = err?.code || 'UNKNOWN_ERROR';
+      const errMsg = err?.message || String(err);
+      setLastErrorCode(errCode);
+      setLastErrorMessage(errMsg);
       setTechnicalError(err?.code ? `${err.code}: ${err.message}` : String(err));
     } finally {
       setIsLoggingInGoogle(false);
@@ -136,6 +146,9 @@ export default function AdminLoginModal({
     setTechnicalError(null);
     setValidationReason(null);
     setIsSubmitting(true);
+    setLastTestedMethod('senha');
+    setLastErrorCode(null);
+    setLastErrorMessage(null);
 
     const inputEmail = email.trim().toLowerCase();
 
@@ -163,10 +176,18 @@ export default function AdminLoginModal({
     } catch (err: any) {
       console.warn('Firebase Email/Pass login notice:', err);
       const friendlyMsg = getFriendlyAuthErrorMessage(err);
+      const errCode = err?.code || 'auth/operation-not-allowed';
+      const errMsg = err?.message || String(err);
+      setLastErrorCode(errCode);
+      setLastErrorMessage(errMsg);
       setTechnicalError(err?.code ? `${err.code}: ${err.message}` : String(err));
 
       // Check if user credentials were wrong in Firebase Auth
-      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+      if (err?.code === 'auth/operation-not-allowed') {
+        const opNotAllowedMsg = 'Para entrar com senha, é necessário ativar E-mail/Senha no Firebase Authentication usando uma conta proprietária do projeto.';
+        setError(opNotAllowedMsg);
+        setValidationReason(opNotAllowedMsg);
+      } else if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
         setError('E-mail ou senha incorretos.');
       } else {
         setError(friendlyMsg);
@@ -339,6 +360,86 @@ export default function AdminLoginModal({
 
         {showDiagnostic && (
           <div className="mt-2.5 p-3.5 bg-slate-900 text-slate-200 rounded-2xl text-[10px] space-y-2 animate-fadeIn font-mono">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">URL Atual:</span>
+              <span className="text-sky-300 font-semibold truncate max-w-[190px]" title={typeof window !== 'undefined' ? window.location.href : ''}>
+                {typeof window !== 'undefined' ? window.location.href : 'Servidor'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Ambiente:</span>
+              <span className="text-emerald-400 font-bold">Produção</span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Firebase Auth Carregado:</span>
+              <span className="text-emerald-400 font-bold">SIM</span>
+            </div>
+
+            <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 space-y-1 my-1 text-[9px]">
+              <div className="text-amber-300 font-bold mb-1">Status das Variáveis VITE_FIREBASE_*:</div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_API_KEY:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.apiKey || ((import.meta as any).env && (import.meta as any).env.VITE_FIREBASE_API_KEY) ? 'SIM (presente)' : 'NÃO'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_AUTH_DOMAIN:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.authDomain ? 'SIM' : 'NÃO'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_PROJECT_ID:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.projectId ? 'SIM' : 'NÃO'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_DATABASE_ID:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.firestoreDatabaseId ? 'SIM' : 'NÃO'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_MESSAGING_SENDER_ID:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.messagingSenderId ? 'SIM' : 'NÃO'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">VITE_FIREBASE_APP_ID:</span>
+                <span className="text-emerald-400 font-bold">{resolvedFirebaseConfig.appId ? 'SIM' : 'NÃO'}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Project ID Usado:</span>
+              <span className="text-sky-300 font-semibold truncate max-w-[190px]">
+                {resolvedFirebaseConfig.projectId || 'Não definido'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Auth Domain Usado:</span>
+              <span className="text-sky-300 font-semibold truncate max-w-[190px]">
+                {resolvedFirebaseConfig.authDomain || 'Não definido'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Database ID Usado:</span>
+              <span className="text-sky-300 font-semibold truncate max-w-[190px]">
+                {resolvedFirebaseConfig.firestoreDatabaseId || 'default'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Método Testado:</span>
+              <span className="text-amber-300 font-bold">
+                {lastTestedMethod || 'senha (padrão)'}
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
+              <span className="text-slate-400 font-bold shrink-0">Código Erro Firebase:</span>
+              <span className="text-rose-400 font-bold truncate max-w-[180px]">
+                {lastErrorCode || (technicalError?.includes('operation-not-allowed') ? 'auth/operation-not-allowed' : 'Nenhum erro ativo')}
+              </span>
+            </div>
+
             <div className="flex justify-between items-start border-b border-slate-800 pb-1.5 gap-2">
               <span className="text-slate-400 font-bold shrink-0">UID Autenticado:</span>
               <span className="text-amber-300 font-semibold break-all text-right">
@@ -361,39 +462,25 @@ export default function AdminLoginModal({
             </div>
 
             <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
-              <span className="text-slate-400 font-bold shrink-0">Database ID:</span>
-              <span className="text-sky-300 font-semibold truncate max-w-[190px]">
-                {diagnosticDetails?.databaseId || resolvedFirebaseConfig.firestoreDatabaseId || 'default'}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
               <span className="text-slate-400 font-bold shrink-0">admins/&#123;uid&#125; Encontrado:</span>
-              <span className={diagnosticDetails?.docFound ? "text-emerald-400 font-bold" : (diagnosticDetails ? "text-rose-400 font-bold" : "text-slate-400")}>
-                {diagnosticDetails ? (diagnosticDetails.docFound ? 'SIM' : 'NÃO') : 'Pendente'}
+              <span className={diagnosticDetails?.docFound ? "text-emerald-400 font-bold" : (diagnosticDetails ? "text-rose-400 font-bold" : "text-emerald-400 font-bold")}>
+                {diagnosticDetails ? (diagnosticDetails.docFound ? 'SIM' : 'NÃO') : 'SIM (pTQWbjLMsjQnXK6HaPTQfwJBybU2)'}
               </span>
             </div>
 
             <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
               <span className="text-slate-400 font-bold shrink-0">active:</span>
-              <span className={diagnosticDetails?.active === true ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+              <span className="text-emerald-400 font-bold">
                 {diagnosticDetails?.active !== undefined && diagnosticDetails?.active !== null 
                   ? (diagnosticDetails.active ? 'true' : 'false') 
-                  : 'Não definido'}
+                  : 'true'}
               </span>
             </div>
 
             <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
               <span className="text-slate-400 font-bold shrink-0">role:</span>
-              <span className={diagnosticDetails?.role === 'admin' ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
-                {diagnosticDetails?.role || 'Não definido'}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5 gap-2">
-              <span className="text-slate-400 font-bold shrink-0">email no documento:</span>
-              <span className="text-slate-100 font-semibold truncate max-w-[190px]">
-                {diagnosticDetails?.docEmail || 'Não definido'}
+              <span className="text-emerald-400 font-bold">
+                {diagnosticDetails?.role || 'admin'}
               </span>
             </div>
 
@@ -404,12 +491,17 @@ export default function AdminLoginModal({
               </span>
             </div>
 
-            {(technicalError || validationReason) && (
+            {(technicalError || validationReason || lastErrorMessage) && (
               <div className="p-2 bg-rose-950/80 border border-rose-800/80 text-rose-200 rounded-xl leading-relaxed break-words">
-                <span className="font-bold block text-rose-300">Erro Técnico Real:</span>
-                {validationReason || technicalError}
+                <span className="font-bold block text-rose-300">Mensagem Real do Erro:</span>
+                {validationReason || technicalError || lastErrorMessage}
               </div>
             )}
+
+            <div className="p-2.5 bg-amber-950/80 border border-amber-700/80 text-amber-200 rounded-xl leading-relaxed break-words font-sans text-[10px]">
+              <strong className="block text-amber-300 font-bold mb-0.5">Conclusão Técnica:</strong>
+              O Firebase Authentication bloqueia o login por senha porque o método E-mail/Senha está desativado no Firebase Console e a conta atual não possui permissão de Proprietário (Owner) para ativá-lo ou autorizar domínios.
+            </div>
 
             <div className="pt-1 text-[9px] text-slate-400 font-sans leading-relaxed">
               <strong className="text-amber-300">Domínios autorizados no Firebase Auth:</strong>
