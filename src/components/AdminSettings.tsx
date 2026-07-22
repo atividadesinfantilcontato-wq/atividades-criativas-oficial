@@ -766,7 +766,7 @@ export default function AdminSettings({
             </div>
 
             <div className="flex flex-col gap-1.5 border border-slate-100 rounded-2xl p-4 bg-slate-50/30">
-              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold mb-2">Foto da Autora (Upload para Firebase Storage)</label>
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-bold mb-2">Foto da Autora (Upload R2)</label>
               <ImageFieldEditor
                 field="authorPhotoUrl"
                 label="Foto de Andreia Silva"

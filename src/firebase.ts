@@ -10,7 +10,6 @@ import {
   User
 } from 'firebase/auth';
 import { initializeFirestore, doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 import firebaseConfigJson from '../firebase-applet-config.json';
 
 // Resolved config merging Vercel environment variables and applet configuration
@@ -41,7 +40,6 @@ export const resolvedFirebaseConfig = {
   authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || `${finalProjectId}.firebaseapp.com`,
   projectId: finalProjectId,
   firestoreDatabaseId: finalDatabaseId,
-  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket || `${finalProjectId}.firebasestorage.app`,
   messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
   appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
 };
@@ -51,7 +49,6 @@ export const app = initializeApp({
   apiKey: resolvedFirebaseConfig.apiKey,
   authDomain: resolvedFirebaseConfig.authDomain,
   projectId: resolvedFirebaseConfig.projectId,
-  storageBucket: resolvedFirebaseConfig.storageBucket,
   messagingSenderId: resolvedFirebaseConfig.messagingSenderId,
   appId: resolvedFirebaseConfig.appId,
 });
@@ -62,9 +59,6 @@ export const db = initializeFirestore(
   { ignoreUndefinedProperties: true }, 
   resolvedFirebaseConfig.firestoreDatabaseId
 );
-
-// Initialize Storage using the configured bucket
-export const storage = getStorage(app);
 
 // Initialize Auth
 export const auth = getAuth(app);

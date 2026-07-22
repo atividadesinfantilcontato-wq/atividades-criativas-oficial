@@ -1,18 +1,14 @@
-import express from "express";
-import path from "path";
 import multer from "multer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { createServer as createViteServer } from "vite";
 import fs from "fs";
+import path from "path";
 
-// Initialize express
-const app = express();
-const PORT = 3000;
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
-// Body parser
-app.use(express.json());
-
-// Set up Multer (in-memory storage for file uploading)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -20,45 +16,44 @@ const upload = multer({
   },
 });
 
-// Import Firebase config to get apiKey if needed
-const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-let firebaseConfig: any = {};
-if (fs.existsSync(firebaseConfigPath)) {
-  try {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-  } catch (err) {
-    console.error("Erro ao ler firebase-applet-config.json", err);
-  }
+function runMiddleware(req: any, res: any, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
 }
 
-// Route to check R2 Configuration status
-app.get("/api/r2-status", (req, res) => {
-  const missing: string[] = [];
-  if (!process.env.CLOUDFLARE_ACCOUNT_ID) missing.push("CLOUDFLARE_ACCOUNT_ID");
-  if (!process.env.R2_ACCESS_KEY_ID) missing.push("R2_ACCESS_KEY_ID");
-  if (!process.env.R2_SECRET_ACCESS_KEY) missing.push("R2_SECRET_ACCESS_KEY");
-  if (!process.env.R2_BUCKET_NAME) missing.push("R2_BUCKET_NAME");
-  if (!process.env.R2_PUBLIC_URL) missing.push("R2_PUBLIC_URL");
+export default async function handler(req: any, res: any) {
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
 
-  res.json({ 
-    configured: missing.length === 0,
-    missing: missing,
-    details: {
-      has_account_id: !!process.env.CLOUDFLARE_ACCOUNT_ID,
-      has_access_key: !!process.env.R2_ACCESS_KEY_ID,
-      has_secret_key: !!process.env.R2_SECRET_ACCESS_KEY,
-      has_bucket_name: !!process.env.R2_BUCKET_NAME,
-      has_public_url: !!process.env.R2_PUBLIC_URL
-    }
-  });
-});
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Método não permitido." });
+  }
 
-// API endpoint to handle R2 secure upload
-app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
   try {
+    // Parse multipart form data
+    await runMiddleware(req, res, upload.single("file"));
+
+    // Read firebase config if exists
+    let firebaseConfig: any = {};
+    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(firebaseConfigPath)) {
+      try {
+        firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+      } catch (err) {
+        console.error("Erro ao ler firebase-applet-config.json", err);
+      }
+    }
+
     // 1. Authenticate user
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (!authHeader || typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Não autorizado. Token de autenticação ausente." });
     }
     const token = authHeader.split("Bearer ")[1];
@@ -80,7 +75,7 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
       return res.status(401).json({ error: "Token de autenticação inválido ou expirado." });
     }
 
-    const authData = await authResponse.json();
+    const authData: any = await authResponse.json();
     const user = authData.users?.[0];
     if (!user) {
       return res.status(401).json({ error: "Usuário não encontrado para o token fornecido." });
@@ -93,13 +88,13 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     // 2. Verify admin status via Firestore REST API using the user's token
     const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || firebaseConfig.databaseId || "(default)";
     const projectId = process.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId;
-    
+
     if (projectId && databaseId && !isOfficialAdmin) {
       const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/admins/${uid}`;
       const firestoreResponse = await fetch(firestoreUrl, {
         headers: {
-          "Authorization": `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (!firestoreResponse.ok) {
@@ -107,7 +102,7 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
       }
     }
 
-    // 3. Check R2 Configuration and detail missing variables
+    // 3. Check R2 Configuration
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const accessKeyId = process.env.R2_ACCESS_KEY_ID;
     const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
@@ -139,12 +134,12 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
 
     const timestamp = Date.now();
     const cleanFilename = file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
-    
+
     // Support custom path prefix
-    const customPath = req.body.customPath || req.query.customPath;
+    const customPath = req.body?.customPath || req.query?.customPath;
     let key = `debug-r2/${uid}/${timestamp}-${cleanFilename}`;
     if (customPath) {
-      const cleanCustomPath = String(customPath).replace(/^\/|\/$/g, '');
+      const cleanCustomPath = String(customPath).replace(/^\/|\/$/g, "");
       key = `${cleanCustomPath}/${timestamp}-${cleanFilename}`;
     }
 
@@ -172,7 +167,7 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     const cleanPublicUrl = publicUrl.replace(/\/$/, "");
     const finalUrl = `${cleanPublicUrl}/${key}`;
 
-    res.json({
+    return res.status(200).json({
       url: finalUrl,
       key: key,
       size: file.size,
@@ -181,46 +176,6 @@ app.post("/api/r2-upload", upload.single("file"), async (req, res) => {
     });
   } catch (err: any) {
     console.error("Erro no r2-upload endpoint:", err);
-    res.status(500).json({ error: err.message || "Erro interno do servidor durante o upload R2." });
+    return res.status(500).json({ error: err.message || "Erro interno do servidor durante o upload R2." });
   }
-});
-
-// API Error Handler - Always return JSON for errors in /api routes
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (req.path.startsWith("/api/")) {
-    console.error("Express API Error:", err);
-    return res.status(err.status || 500).json({ error: err.message || "Erro interno no servidor de API." });
-  }
-  next(err);
-});
-
-// Catch-all 404 for unhandled API routes so they return JSON instead of index.html
-app.all("/api/*", (req, res) => {
-  res.status(404).json({ error: `Endpoint API não encontrado: ${req.method} ${req.path}` });
-});
-
-// Vite middleware and static files setup
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api/")) {
-        return next();
-      }
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
 }
-
-startServer();

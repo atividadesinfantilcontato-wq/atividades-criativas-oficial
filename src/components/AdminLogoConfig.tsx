@@ -4,8 +4,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, CheckCircle, AlertTriangle, 
   ArrowLeft, Save, Trash2, ArrowRight
 } from 'lucide-react';
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { storage, auth } from '../firebase';
+import { auth } from '../firebase';
 import { SiteConfig } from '../types';
 import { compressImage } from '../utils/imageCompressor';
 
@@ -173,7 +172,7 @@ export default function AdminLogoConfig({
     }
   };
 
-  // Helper to handle and upload selected file to Firebase Storage
+  // Helper to handle and upload selected file to R2 Storage
   const handleUploadFile = (file: File, type: 'main' | 'mobile' | 'favicon') => {
     setUploadError(null);
     if (type === 'main') setAspectRatioWarning(null);
@@ -207,7 +206,7 @@ export default function AdminLogoConfig({
       img.src = URL.createObjectURL(file);
     }
 
-    // 3. Simple Storage Upload Process with R2 priority and Firebase Storage Fallback
+    // 3. Simple Storage Upload Process with R2 Storage
     const storagePath = `identity/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
 
     setUploadProgress(prev => ({ ...prev, [type]: 20 }));
@@ -219,77 +218,46 @@ export default function AdminLogoConfig({
         let downloadUrl = '';
         let keyPath = '';
 
-        // Try R2 Upload first
-        try {
-          const user = auth.currentUser;
-          if (!user) {
-            throw new Error("Você precisa estar logado como administrador para enviar imagens.");
-          }
-
-          const idToken = await user.getIdToken();
-          setUploadProgress(prev => ({ ...prev, [type]: 50 }));
-
-          const formData = new FormData();
-          formData.append("file", file);
-          formData.append("customPath", "site/logo");
-
-          const response = await fetch("/api/r2-upload", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: formData
-          });
-
-          const contentType = response.headers.get("content-type") || "";
-          let resData: any = {};
-          if (contentType.includes("application/json")) {
-            resData = await response.json();
-          } else {
-            const textData = await response.text();
-            throw new Error(`R2 upload failed with status ${response.status}: ${textData.substring(0, 100)}`);
-          }
-
-          if (!response.ok) {
-            throw new Error(resData.error || `R2 upload failed with status ${response.status}`);
-          }
-
-          downloadUrl = resData.url;
-          keyPath = resData.key;
-        } catch (r2Error) {
-          console.warn('[Diagnostic] R2 logo upload failed, trying Firebase Storage as fallback:', r2Error);
-          
-          // Firebase Storage Fallback
-          const storageRef = ref(storage, storagePath);
-          setUploadProgress(prev => ({ ...prev, [type]: 60 }));
-          
-          // Timeout helper
-          const withTimeout = <T,>(promise: Promise<T>, ms: number, context: string): Promise<T> => {
-            return Promise.race([
-              promise,
-              new Promise<T>((_, reject) =>
-                setTimeout(() => reject(new Error(`TIMEOUT: O processo "${context}" demorou mais que ${ms / 1000}s.`)), ms)
-              )
-            ]);
-          };
-
-          try {
-            const uploadPromise = (async () => {
-              const result = await uploadBytes(storageRef, file);
-              setUploadProgress(prev => ({ ...prev, [type]: 80 }));
-              const url = await getDownloadURL(result.ref);
-              return url;
-            })();
-
-            downloadUrl = await withTimeout(uploadPromise, 20000, "Envio da logo");
-            keyPath = storagePath;
-          } catch (fbErr: any) {
-            console.warn('[Diagnostic] Firebase Storage logo upload failed, using compressed Data URL fallback:', fbErr);
-            const compressedDataUrl = await compressImage(file, 800, 0.82);
-            downloadUrl = compressedDataUrl;
-            keyPath = `dataurl_${Date.now()}`;
-          }
+        // R2 Upload
+        const user = auth.currentUser;
+        if (!user) {
+          throw new Error("Você precisa estar logado como administrador para enviar imagens.");
         }
+
+        if (file.type.startsWith('video/') || file.name.match(/\.(mp4|m4v|avi|mov|wmv|flv|webm|mkv)$/i)) {
+          throw new Error("Vídeos devem ser cadastrados apenas por URL do YouTube.");
+        }
+
+        const idToken = await user.getIdToken();
+        setUploadProgress(prev => ({ ...prev, [type]: 50 }));
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("customPath", "site/logo");
+
+        const response = await fetch("/api/r2-upload", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${idToken}`
+          },
+          body: formData
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        let resData: any = {};
+        if (contentType.includes("application/json")) {
+          resData = await response.json();
+        } else {
+          const textData = await response.text();
+          throw new Error(`R2 upload failed with status ${response.status}: ${textData.substring(0, 100)}`);
+        }
+
+        if (!response.ok) {
+          throw new Error(resData.error || `R2 upload failed with status ${response.status}`);
+        }
+
+        downloadUrl = resData.url;
+        keyPath = resData.key;
 
         setUploadProgress(prev => ({ ...prev, [type]: 100 }));
 
@@ -305,7 +273,7 @@ export default function AdminLogoConfig({
         }
         onSuccess(`Imagem carregada com sucesso!`);
       } catch (error: any) {
-        console.error('[Diagnostic] Firebase Storage logo upload failed:', error);
+        console.error('[Diagnostic] R2 Storage logo upload failed:', error);
         setUploadError(`Falha no upload da logo: ${error.message || String(error)}`);
       } finally {
         setTimeout(() => {

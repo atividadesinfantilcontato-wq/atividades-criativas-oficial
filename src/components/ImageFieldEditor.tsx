@@ -1,8 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Image, Upload, Trash2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { auth, db, storage } from '../firebase';
+import { auth, db } from '../firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { SiteConfig } from '../types';
 import { compressImage } from '../utils/imageCompressor';
 
@@ -95,8 +94,7 @@ export default function ImageFieldEditor({
     ]);
   }
 
-  // Upload image to Firebase Storage and save to Firestore
-  // Upload image to Firebase Storage and save to Firestore
+  // Upload image to Cloudflare R2 and save to Firestore
   const handleUploadAndSave = async (fileToUpload?: File | unknown, localPreviewUrl?: string) => {
     const file = (fileToUpload instanceof File) ? fileToUpload : selectedFile;
     if (!file) return;
@@ -137,125 +135,68 @@ export default function ImageFieldEditor({
       let downloadUrl = '';
       let storagePath = '';
 
-      if (field === 'activityGroupImageUrl' || field === 'authorPhotoUrl' || field === 'seoImageUrl') {
-        try {
-          let customPath = "site/seo";
-          if (field === 'authorPhotoUrl') customPath = "site/author";
-          if (field === 'activityGroupImageUrl') customPath = "site/activity-group";
-
-          setUploadStepText('Enviando para o Cloudflare R2...');
-          setUploadProgress(20);
-
-          const user = auth.currentUser;
-          if (!user) {
-            throw new Error("Você precisa estar logado como administrador para enviar imagens.");
-          }
-
-          // Get ID token for authorization
-          const idToken = await user.getIdToken();
-          setUploadProgress(40);
-
-          // Prepare FormData
-          const formData = new FormData();
-          const fileToPost = new File([uploadBlob], file.name, { type: uploadBlob.type });
-          formData.append("file", fileToPost);
-          formData.append("customPath", customPath);
-
-          const response = await fetch("/api/r2-upload", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: formData
-          });
-
-          if (response.status === 404) {
-            throw new Error("O servidor de upload R2 não está disponível. Por favor, verifique se o R2 está configurado.");
-          }
-
-          const contentType = response.headers.get("content-type") || "";
-          let resData: any = {};
-          if (contentType.includes("application/json")) {
-            resData = await response.json();
-          } else {
-            const textData = await response.text();
-            throw new Error(`Servidor de upload retornou resposta inválida (${response.status}): ${textData.substring(0, 120)}`);
-          }
-
-          if (!response.ok) {
-            throw new Error(resData.error || `Erro de upload: ${response.status}`);
-          }
-
-          downloadUrl = resData.url;
-          storagePath = resData.key;
-          setUploadProgress(100);
-          console.log(`[Diagnostic] Upload completed successfully via Cloudflare R2: ${downloadUrl}`);
-        } catch (uploadError: any) {
-          console.warn('[Diagnostic] Cloudflare R2 upload failed, attempting Firebase Storage fallback:', uploadError);
-          try {
-            setUploadStepText('Enviando para o Firebase Storage...');
-            setUploadProgress(50);
-            const fileExt = file.name.split('.').pop() || 'jpg';
-            const uniqueName = `${Date.now()}_image.${fileExt}`;
-            storagePath = `${storagePathPrefix}/${uniqueName}`;
-            const storageRef = ref(storage, storagePath);
-
-            const uploadPromise = (async () => {
-              const result = await uploadBytes(storageRef, uploadBlob);
-              setUploadProgress(80);
-              const url = await getDownloadURL(result.ref);
-              setUploadProgress(100);
-              return url;
-            })();
-
-            downloadUrl = await withTimeout(uploadPromise, 20000, "Envio para o Firebase");
-          } catch (fbErr: any) {
-            console.warn('[Diagnostic] Firebase Storage fallback also failed, using compressed Data URL:', fbErr);
-            if (localBase64DataUrl) {
-              downloadUrl = localBase64DataUrl;
-              storagePath = `dataurl_${Date.now()}`;
-              setUploadProgress(100);
-            } else {
-              throw new Error(`Falha no upload R2 e Firebase: ${uploadError.message || uploadError}`);
-            }
-          }
-        }
-      } else {
-        try {
-          setUploadStepText('Enviando para o Firebase...');
-          setUploadProgress(15);
-
-          // Generate a unique filename using timestamp
-          const fileExt = file.name.split('.').pop() || 'jpg';
-          const uniqueName = `${Date.now()}_image.${fileExt}`;
-          storagePath = `${storagePathPrefix}/${uniqueName}`;
-          const storageRef = ref(storage, storagePath);
-
-          // We use uploadBytes (non-resumable simple upload) as requested by the user
-          const uploadPromise = (async () => {
-            setUploadProgress(35);
-            const result = await uploadBytes(storageRef, uploadBlob);
-            setUploadProgress(70);
-            const url = await getDownloadURL(result.ref);
-            setUploadProgress(100);
-            return url;
-          })();
-
-          // Wrap with 30s timeout
-          const timeoutMs = 30000;
-          downloadUrl = await withTimeout(uploadPromise, timeoutMs, "Envio da foto");
-          console.log(`[Diagnostic] 4. Upload completed successfully via Firebase Storage`);
-        } catch (uploadError: any) {
-          console.warn('[Diagnostic] Firebase Storage upload failed, using compressed Data URL fallback:', uploadError);
-          if (localBase64DataUrl) {
-            downloadUrl = localBase64DataUrl;
-            storagePath = `dataurl_${Date.now()}`;
-            setUploadProgress(100);
-          } else {
-            throw uploadError;
-          }
-        }
+      // Check if file is video
+      if (file.type.startsWith('video/') || file.name.match(/\.(mp4|m4v|avi|mov|wmv|flv|webm|mkv)$/i)) {
+        throw new Error("Vídeos devem ser cadastrados apenas por URL do YouTube.");
       }
+
+      let customPath = "site/general";
+      if (field === 'authorPhotoUrl') customPath = "site/author";
+      if (field === 'activityGroupImageUrl') customPath = "site/activity-group";
+      if (field === 'seoImageUrl') customPath = "site/seo";
+      if (field === 'logoUrl' || field === 'mobileLogoUrl' || field === 'faviconUrl') customPath = "site/logo";
+      if (field === 'heroBackgroundImageUrl') customPath = "site/banner";
+      if (field === 'featuredKitImageUrl') customPath = "site/kit";
+      if (field === 'newsletterImageUrl') customPath = "site/newsletter";
+      if (field === 'footerImageUrl') customPath = "site/footer";
+
+      setUploadStepText('Enviando para o Cloudflare R2...');
+      setUploadProgress(20);
+
+      const user = auth.currentUser;
+      if (!user) {
+        throw new Error("Você precisa estar logado como administrador para enviar imagens.");
+      }
+
+      // Get ID token for authorization
+      const idToken = await user.getIdToken();
+      setUploadProgress(40);
+
+      // Prepare FormData
+      const formData = new FormData();
+      const fileToPost = new File([uploadBlob], file.name, { type: uploadBlob.type });
+      formData.append("file", fileToPost);
+      formData.append("customPath", customPath);
+
+      const response = await fetch("/api/r2-upload", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: formData
+      });
+
+      if (response.status === 404) {
+        throw new Error("O servidor de upload R2 não está disponível. Por favor, verifique se o R2 está configurado.");
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      let resData: any = {};
+      if (contentType.includes("application/json")) {
+        resData = await response.json();
+      } else {
+        const textData = await response.text();
+        throw new Error(`Servidor de upload retornou resposta inválida (${response.status}): ${textData.substring(0, 120)}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(resData.error || `Erro de upload R2: ${response.status}`);
+      }
+
+      downloadUrl = resData.url;
+      storagePath = resData.key;
+      setUploadProgress(100);
+      console.log(`[Diagnostic] Upload completed successfully via Cloudflare R2: ${downloadUrl}`);
 
       console.log(`[Diagnostic] 5. Real downloadURL obtained: ${downloadUrl ? (downloadUrl.startsWith('data:') ? 'Base64 data URL' : downloadUrl) : 'empty'}`);
       console.log(`[Diagnostic] 6. Starting Firestore save`);
@@ -346,9 +287,9 @@ export default function ImageFieldEditor({
       if (friendlyMsg.includes("TIMEOUT")) {
         friendlyMsg = "O envio ou salvamento demorou muito e foi cancelado. Tente novamente.";
       } else if (error?.code === 'storage/unauthorized') {
-        friendlyMsg = "Sem permissão administrativa para salvar arquivos no Firebase Storage.";
+        friendlyMsg = "Sem permissão administrativa para salvar arquivos.";
       } else if (error?.code === 'storage/quota-exceeded') {
-        friendlyMsg = "Quota de armazenamento do Firebase excedida.";
+        friendlyMsg = "Quota de armazenamento excedida.";
       } else if (error?.code === 'storage/canceled') {
         friendlyMsg = "Envio cancelado pelo usuário.";
       }

@@ -9,9 +9,8 @@ import { Product, sanitizeProduct, SiteConfig } from '../types';
 import { INITIAL_CATEGORIES } from '../data';
 import { compressImage, ensureSafeProductPayload } from '../utils/imageCompressor';
 import ProductImage from './ProductImage';
-import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, deleteObject, getStorage } from 'firebase/storage';
 import { doc, setDoc, getDoc, collection, updateDoc } from 'firebase/firestore';
-import { storage, db, auth, app } from '../firebase';
+import { db, auth, app } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface AdminProductFormProps {
@@ -139,7 +138,7 @@ export default function AdminProductForm({
     uid?: string;
     email?: string;
     isAdmin?: boolean;
-    storageBucket?: string;
+    storageProvider?: string;
     databaseId?: string;
     collectionDoc?: string;
     logText?: string;
@@ -328,297 +327,8 @@ export default function AdminProductForm({
   }, [mode]);
 
   const handleTestUpload = async () => {
-    const user = auth.currentUser;
-    if (!user) {
-      showToast('error', 'Nenhum usuário logado. Entre novamente no painel.');
-      return;
-    }
-
-    setIsTestingUpload(true);
-    setTestResult(null);
-
-    // Initial state declarations for results
-    let hasValidDoc = false;
-    let firestoreTestResult = { status: 'pending', error: '' };
-    interface TestResultItem {
-      status: 'pending' | 'success' | 'failed';
-      duration: number;
-      url: string;
-      error?: string;
-      path?: string;
-    }
-    let testARes: TestResultItem = { status: 'pending', duration: 0, url: '' };
-    let testBRes: TestResultItem = { status: 'pending', duration: 0, url: '' };
-    let testCRes: TestResultItem = { status: 'pending', duration: 0, url: '' };
-
-    try {
-      // 1. Check admin validation (with timeout)
-      const adminDocRef = doc(db, 'admins', user.uid);
-      let adminSnap;
-      try {
-        adminSnap = await withTimeout(getDoc(adminDocRef), 10000, "Leitura de documento admins");
-      } catch (readErr: any) {
-        throw new Error(`FIRESTORE_READ_FAILED: Falha na leitura do documento admins. Se persistir, verifique a conexão ou as regras. Detalhe: ${readErr.message}`);
-      }
-      
-      if (adminSnap.exists()) {
-        const data = adminSnap.data();
-        if (data && data.role === 'admin' && data.active === true) {
-          hasValidDoc = true;
-        }
-      }
-
-      if (!hasValidDoc && user.email === 'atividadesinfantilcontato@gmail.com') {
-        try {
-          const now = new Date().toISOString();
-          await withTimeout(
-            setDoc(adminDocRef, {
-              role: 'admin',
-              active: true,
-              email: user.email,
-              createdAt: now,
-              updatedAt: now
-            }),
-            10000,
-            "Gravação automática de admins"
-          );
-          hasValidDoc = true;
-          adminSnap = await withTimeout(getDoc(adminDocRef), 10000, "Confirmação de gravação admins");
-        } catch (writeErr: any) {
-          console.error("Failed to auto-provision admin doc in handleTestUpload:", writeErr);
-        }
-      }
-
-      if (!hasValidDoc) {
-        if (!adminSnap.exists()) {
-          throw new Error("NO_ADMIN_DOCUMENT: Usuário autenticado, mas sem documento de administrador.");
-        } else {
-          throw new Error("USER_NOT_ADMIN_ACTIVE: O documento admins existe mas não possui role 'admin' ou não está ativo.");
-        }
-      }
-
-      // 1.5 ISOLATED FIRESTORE TEST: Write to debug_admin_test/{uid}
-      try {
-        const fsTestDocRef = doc(db, 'debug_admin_test', user.uid);
-        await withTimeout(
-          setDoc(fsTestDocRef, {
-            uid: user.uid,
-            email: user.email || '',
-            adminValidated: true,
-            createdAt: new Date().toISOString(),
-            test: true
-          }),
-          10000,
-          "Gravação teste em debug_admin_test"
-        );
-        firestoreTestResult = { status: 'success', error: '' };
-      } catch (fsTestErr: any) {
-        console.error("Isolated Firestore test failed:", fsTestErr);
-        firestoreTestResult = { status: 'failed', error: fsTestErr.message || String(fsTestErr) };
-      }
-
-      // 2. Create tiny 1x1 transparent PNG blob for Storage uploads
-      const testBlob = new Blob([
-        new Uint8Array([
-          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 94, 99, 96, 96, 96, 0, 0, 0, 5, 0, 1, 165, 246, 69, 123, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130
-        ])
-      ], { type: 'image/png' });
-      const timestamp = Date.now();
-      const testFile = new File([testBlob], `test_${timestamp}.png`, { type: 'image/png' });
-
-      // Helper to run individual Storage upload test with a local timeout
-      const runSingleTest = async (
-        action: () => Promise<string>,
-        timeoutMs: number = 10000
-      ) => {
-        const start = Date.now();
-        try {
-          const url = await Promise.race([
-            action(),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("TIMEOUT")), timeoutMs)
-            )
-          ]);
-          return { status: 'success' as const, duration: Date.now() - start, url, error: undefined };
-        } catch (err: any) {
-          const duration = Date.now() - start;
-          const errCode = err.code || err.message?.match(/storage\/[a-z\-]+/)?.[0] || 'unknown';
-          return { status: 'failed' as const, duration, url: '', error: err.message === 'TIMEOUT' ? 'TIMEOUT' : `${errCode} - ${err.message || String(err)}` };
-        }
-      };
-
-      const bucketConfig = (firebaseConfig as any).storageBucket || 'operating-flame-7dzmz.firebasestorage.app';
-      const bucketLegacy = 'operating-flame-7dzmz.appspot.com';
-
-      // Function to run a simple or resumable test on a given bucket
-      const runTestOnBucket = async (bucketName: string, pathPrefix: string, useResumable: boolean) => {
-        const path = `${pathPrefix}/${user.uid}/${timestamp}.png`;
-        const localStorageInstance = getStorage(app, `gs://${bucketName}`);
-        const fileRef = ref(localStorageInstance, path);
-        
-        const res = await runSingleTest(async () => {
-          if (useResumable) {
-            const uploadTask = uploadBytesResumable(fileRef, testFile, { contentType: 'image/png' });
-            return new Promise<string>((resolve, reject) => {
-              uploadTask.on('state_changed',
-                null,
-                (err) => reject(err),
-                async () => {
-                  try {
-                    const url = await getDownloadURL(uploadTask.snapshot.ref);
-                    resolve(url);
-                  } catch (getUrlErr) {
-                    reject(getUrlErr);
-                  }
-                }
-              );
-            });
-          } else {
-            const snap = await uploadBytes(fileRef, testFile, { contentType: 'image/png' });
-            return await getDownloadURL(snap.ref);
-          }
-        }, 10000); // 10s local timeout per test
-        
-        return { ...res, path };
-      };
-
-      // Perform tests on Configured Bucket
-      const testConfigSimple = await runTestOnBucket(bucketConfig, 'debug-upload', false);
-      const testConfigResumable = await runTestOnBucket(bucketConfig, 'debug-upload-resumable', true);
-
-      // Perform tests on Legacy Bucket
-      const testLegacySimple = await runTestOnBucket(bucketLegacy, 'debug-upload', false);
-      const testLegacyResumable = await runTestOnBucket(bucketLegacy, 'debug-upload-resumable', true);
-
-      // Determine successful bucket
-      let workingBucket = '';
-      let anyStorageSuccess = false;
-      let winningMethod = '';
-      let downloadUrl = '';
-
-      if (testConfigSimple.status === 'success') {
-        workingBucket = bucketConfig;
-        anyStorageSuccess = true;
-        winningMethod = 'Bucket Configurado (.firebasestorage.app - Envio Simples)';
-        downloadUrl = testConfigSimple.url;
-      } else if (testConfigResumable.status === 'success') {
-        workingBucket = bucketConfig;
-        anyStorageSuccess = true;
-        winningMethod = 'Bucket Configurado (.firebasestorage.app - Envio Resumable)';
-        downloadUrl = testConfigResumable.url;
-      } else if (testLegacySimple.status === 'success') {
-        workingBucket = bucketLegacy;
-        anyStorageSuccess = true;
-        winningMethod = 'Bucket Legacy (.appspot.com - Envio Simples)';
-        downloadUrl = testLegacySimple.url;
-      } else if (testLegacyResumable.status === 'success') {
-        workingBucket = bucketLegacy;
-        anyStorageSuccess = true;
-        winningMethod = 'Bucket Legacy (.appspot.com - Envio Resumable)';
-        downloadUrl = testLegacyResumable.url;
-      }
-
-      // Map to A, B, C for UI rendering compatibility
-      testARes = {
-        status: testConfigSimple.status,
-        duration: testConfigSimple.duration,
-        url: testConfigSimple.url,
-        error: testConfigSimple.error,
-        path: testConfigSimple.path
-      };
-      testBRes = {
-        status: testConfigResumable.status,
-        duration: testConfigResumable.duration,
-        url: testConfigResumable.url,
-        error: testConfigResumable.error,
-        path: testConfigResumable.path
-      };
-      testCRes = {
-        status: testLegacySimple.status === 'success' ? 'success' : testLegacyResumable.status,
-        duration: testLegacySimple.status === 'success' ? testLegacySimple.duration : testLegacyResumable.duration,
-        url: testLegacySimple.status === 'success' ? testLegacySimple.url : testLegacyResumable.url,
-        error: testLegacySimple.status === 'success' ? undefined : `${testLegacySimple.error || 'unknown'} / ${testLegacyResumable.error || 'unknown'}`,
-        path: testLegacySimple.path
-      };
-
-      // Persist the verified working bucket to localStorage so the dynamic storage Proxy immediately utilizes it!
-      if (anyStorageSuccess && workingBucket) {
-        localStorage.setItem('preferred_storage_bucket', workingBucket);
-      }
-
-      const firestoreSuccess = firestoreTestResult.status === 'success';
-
-      // 4. Save test results to Firestore for historic records (with timeout)
-      const testDocRef = doc(db, 'debug_uploads', `test_${user.uid}`);
-      const testPayload = {
-        uid: user.uid,
-        email: user.email || '',
-        isAdmin: hasValidDoc,
-        timestamp: new Date().toISOString(),
-        url: downloadUrl,
-        status: anyStorageSuccess ? 'success' : 'failed',
-        storageBucket: workingBucket || bucketConfig,
-        databaseId: (firebaseConfig as any).firestoreDatabaseId || '',
-        firestoreTest: firestoreTestResult,
-        testARes,
-        testBRes,
-        testCRes,
-        storageSuccess: anyStorageSuccess,
-        firestoreSuccess
-      };
-      
-      try {
-        await withTimeout(setDoc(testDocRef, testPayload), 10000, "Gravação de log de uploads");
-      } catch (saveLogErr: any) {
-        console.warn("Failed to write test log to Firestore debug_uploads:", saveLogErr);
-      }
-
-      setTestResult({
-        success: anyStorageSuccess, // STRICTLY require Storage upload success to declare success!
-        message: anyStorageSuccess 
-          ? `Teste do Firestore e de Upload do Storage concluídos com SUCESSO! Bucket ativo: ${workingBucket} via ${winningMethod}` 
-          : firestoreSuccess 
-            ? 'Banco de dados funcionando, mas upload de arquivos falhou.' 
-            : 'O teste do Firestore falhou (verifique regras de segurança).',
-        details: testPayload
-      });
-
-      if (firestoreSuccess && anyStorageSuccess) {
-        showToast('success', 'Teste de integração concluído com sucesso!');
-      } else if (firestoreSuccess) {
-        showToast('error', 'Firestore gravou com sucesso, mas o Storage falhou.');
-      } else {
-        showToast('error', 'O teste do Firestore falhou.');
-      }
-    } catch (err: any) {
-      console.error("[Test Upload] Failure:", err);
-      const errCode = err.code || err.message?.match(/storage\/[a-z\-]+/)?.[0] || 'unknown';
-      const errMessage = err.message || String(err);
-
-      setTestResult({
-        success: false,
-        message: 'Falha crítica no processo de teste do Firebase.',
-        details: {
-          code: errCode,
-          originalMessage: errMessage,
-          uid: user.uid,
-          email: user.email || '',
-          isAdmin: adminCheckResult.status === 'valid',
-          storageBucket: (firebaseConfig as any).storageBucket || '',
-          databaseId: (firebaseConfig as any).firestoreDatabaseId || '',
-          collectionDoc: `debug_uploads/test_${user.uid}`,
-          firestoreTest: firestoreTestResult,
-          testARes,
-          testBRes,
-          testCRes,
-          storageSuccess: false,
-          firestoreSuccess: firestoreTestResult.status === 'success'
-        }
-      });
-      showToast('error', `O teste falhou: ${errMessage}`);
-    } finally {
-      setIsTestingUpload(false);
-    }
+    showToast('error', 'Os uploads de arquivos são processados exclusivamente pelo Cloudflare R2.');
+    return;
   };
 
   const handleTestR2Upload = async () => {
@@ -1020,64 +730,42 @@ export default function AdminProductForm({
   };
 
   const uploadToR2 = async (file: File, customPath: string): Promise<{ url: string; key: string }> => {
+    if (file.type.startsWith('video/') || file.name.match(/\.(mp4|m4v|avi|mov|wmv|flv|webm|mkv)$/i)) {
+      throw new Error("Vídeos devem ser cadastrados apenas por URL do YouTube.");
+    }
+
     const user = auth.currentUser;
     if (!user) {
       throw new Error("Você precisa estar logado como administrador.");
     }
 
-    try {
-      const idToken = await user.getIdToken();
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("customPath", customPath);
+    const idToken = await user.getIdToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("customPath", customPath);
 
-      const response = await fetch("/api/r2-upload", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${idToken}`
-        },
-        body: formData
-      });
+    const response = await fetch("/api/r2-upload", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${idToken}`
+      },
+      body: formData
+    });
 
-      const contentType = response.headers.get("content-type") || "";
-      let resData: any = {};
-      if (contentType.includes("application/json")) {
-        resData = await response.json();
-      } else {
-        const textData = await response.text();
-        throw new Error(`Servidor R2 retornou resposta não-JSON (${response.status}): ${textData.substring(0, 100)}`);
-      }
-
-      if (!response.ok) {
-        throw new Error(resData.error || `Erro no upload R2: ${response.status}`);
-      }
-
-      return resData;
-    } catch (r2Err: any) {
-      console.warn('[Diagnostic] R2 upload failed, trying Firebase Storage as fallback:', r2Err);
-      try {
-        const timestamp = Date.now();
-        const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const storagePath = `${customPath}/${timestamp}_${safeName}`;
-        const storageRef = ref(storage, storagePath);
-
-        const uploadPromise = (async () => {
-          const result = await uploadBytes(storageRef, file);
-          const url = await getDownloadURL(result.ref);
-          return { url, key: storagePath };
-        })();
-
-        return await withTimeout(uploadPromise, 20000, "Envio para o Firebase Storage");
-      } catch (fbErr: any) {
-        console.warn('[Diagnostic] Firebase Storage upload also failed, using compressed Data URL:', fbErr);
-        try {
-          const compressedDataUrl = await compressImage(file, 1000, 0.82);
-          return { url: compressedDataUrl, key: `dataurl_${Date.now()}` };
-        } catch (compressErr) {
-          throw new Error(`Falha ao enviar a imagem (R2 e Firebase) e na compressão: ${r2Err.message || r2Err}`);
-        }
-      }
+    const contentType = response.headers.get("content-type") || "";
+    let resData: any = {};
+    if (contentType.includes("application/json")) {
+      resData = await response.json();
+    } else {
+      const textData = await response.text();
+      throw new Error(`Servidor R2 retornou resposta não-JSON (${response.status}): ${textData.substring(0, 100)}`);
     }
+
+    if (!response.ok) {
+      throw new Error(resData.error || `Erro no upload R2: ${response.status}`);
+    }
+
+    return resData;
   };
 
   const handleSaveProduct = async (saveAsActive: boolean) => {
@@ -1440,7 +1128,7 @@ export default function AdminProductForm({
 
       // Detect common 404/storage bucket not active errors
       if (errCode === 'storage/unknown' || origMsg.includes('404') || origMsg.toLowerCase().includes('not found')) {
-        origMsg += "\n\n[DICA DE RESOLUÇÃO]: O erro de status 404 (Não Encontrado) indica que o bucket padrão de Storage não existe ou o serviço de Firebase Storage não está ativo no console deste projeto. Acesse https://console.firebase.google.com/, entre em seu projeto 'operating-flame-7dzmz', vá em 'Build -> Storage' e clique em 'Começar / Get started' para ativar o serviço.";
+        origMsg += "\n\n[DICA DE RESOLUÇÃO]: Falha ao processar requisição.";
       }
 
       setDiagnosticsDetails({
@@ -1454,7 +1142,7 @@ export default function AdminProductForm({
         uid: auth.currentUser?.uid || 'Nenhum usuário logado',
         email: auth.currentUser?.email || 'Nenhum e-mail',
         isAdmin: adminCheckResult.status === 'valid',
-        storageBucket: (firebaseConfig as any).storageBucket || 'Não configurado',
+        storageProvider: 'Cloudflare R2',
         databaseId: (firebaseConfig as any).firestoreDatabaseId || 'Não configurado',
         collectionDoc: `products/${finalId}`,
         logText: diagnosticsText + `[ERRO] ${friendlyMsg}`
@@ -2234,8 +1922,7 @@ export default function AdminProductForm({
           <div className="mt-3 bg-white/80 p-4 rounded-xl text-[11px] font-mono border border-current/10 space-y-3 text-slate-800">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pb-2.5 border-b border-current/10 text-slate-700">
               <p><strong>Database ID:</strong> <span className="font-semibold text-slate-900">{testResult.details?.databaseId}</span></p>
-              <p><strong>Storage Bucket Ativo:</strong> <span className="font-semibold text-slate-900">{testResult.details?.storageBucket}</span></p>
-              <p><strong>GS URL:</strong> <span className="font-semibold text-slate-900">gs://{testResult.details?.storageBucket}</span></p>
+              <p><strong>Armazenamento:</strong> <span className="font-semibold text-emerald-700">Cloudflare R2 (Ativo)</span></p>
               <p><strong>Usuário Autenticado:</strong> <span className={testResult.details?.uid ? "text-emerald-700 font-bold" : "text-red-700 font-bold"}>{testResult.details?.uid ? 'SIM' : 'NÃO'}</span></p>
               <p><strong>UID:</strong> <span className="text-slate-600">{testResult.details?.uid || 'Nenhum'}</span></p>
               <p><strong>E-mail:</strong> <span className="text-slate-600">{testResult.details?.email || 'Nenhum'}</span></p>
@@ -2318,23 +2005,10 @@ export default function AdminProductForm({
               <div className="mt-4 text-[11px] bg-amber-100 text-amber-900 p-3.5 rounded-lg border border-amber-200 font-sans font-medium space-y-2">
                 <p className="font-extrabold uppercase text-[11px] text-amber-950 flex items-center gap-1">
                   <AlertCircle size={14} className="text-amber-700 shrink-0" />
-                  Firestore conectado, mas Firebase Storage não está funcionando.
+                  Firestore conectado. Armazenamento gerenciado via Cloudflare R2.
                 </p>
                 <p className="leading-relaxed text-amber-800">
-                  Os testes de upload falharam por timeout ou erro de rede (<code>TIMEOUT</code> / <code>retry-limit-exceeded</code> / <code>storage/unknown</code>). No ambiente do Google AI Studio, isso indica que o <strong>Firebase Storage ainda não foi ativado ou criado no seu projeto do Firebase Console</strong>.
-                </p>
-                <div className="p-3 bg-white/70 rounded-lg border border-amber-300 text-[10.5px] leading-relaxed text-slate-800 font-mono">
-                  <p className="font-bold mb-1 font-sans">Como ativar no Console do Firebase:</p>
-                  <ol className="list-decimal pl-4.5 space-y-1">
-                    <li>Acesse <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="underline text-blue-700 font-bold">console.firebase.google.com</a>;</li>
-                    <li>Abra o seu projeto <strong>operating-flame-7dzmz</strong>;</li>
-                    <li>No menu lateral esquerdo, vá em <strong>Build</strong> &gt; <strong>Storage</strong>;</li>
-                    <li>Clique no botão azul <strong>Começar (Get Started)</strong>;</li>
-                    <li>Avance mantendo as configurações padrão (selecione o modo de teste ou de produção e clique em Concluir).</li>
-                  </ol>
-                </div>
-                <p className="leading-relaxed text-amber-800 font-sans">
-                  <strong>Regras de Segurança do Storage:</strong> As regras de segurança em <code>storage.rules</code> foram implantadas com sucesso e liberam escrita especificamente para o administrador logado (e-mail <code>atividadesinfantilcontato@gmail.com</code>). Assim que o bucket for ativado no console, o upload funcionará imediatamente sem problemas de permissão.
+                  Para uploads de arquivos, o sistema utiliza o Cloudflare R2 como único serviço de armazenamento de mídia.
                 </p>
               </div>
             ) : (
@@ -2382,7 +2056,7 @@ export default function AdminProductForm({
           <div className="mt-3 bg-white/80 p-4 rounded-xl text-[11px] font-mono border border-current/10 space-y-3 text-slate-800">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700">
               <p><strong>Status do R2:</strong> <span className={r2TestResult.success ? "text-emerald-700 font-bold" : "text-red-700 font-bold"}>{r2TestResult.success ? 'CONECTADO' : 'ERRO/DESCONECTADO'}</span></p>
-              <p><strong>Firebase Storage status:</strong> <span className="font-semibold text-amber-700">Firebase Storage não será usado para novos uploads. A nova mídia será enviada para R2.</span></p>
+              <p><strong>Armazenamento de Mídia:</strong> <span className="font-semibold text-emerald-700">Cloudflare R2 Ativo.</span></p>
               {r2TestResult.success && (
                 <>
                   <p className="md:col-span-2"><strong>URL do Arquivo R2:</strong> <a href={r2TestResult.details?.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-semibold break-all">{r2TestResult.details?.url}</a></p>
@@ -3126,7 +2800,7 @@ export default function AdminProductForm({
                     <div className="space-y-2 bg-white/70 p-3 rounded-xl border border-red-100">
                       <p className="text-slate-500 text-[10px] uppercase font-black tracking-wider">Configurações de Conexão</p>
                       <ul className="space-y-1.5 text-slate-700 text-[11px] list-disc pl-4 font-mono">
-                        <li><strong>Storage Bucket:</strong> {diagnosticsDetails.storageBucket}</li>
+                        <li><strong>Serviço de Armazenamento:</strong> {diagnosticsDetails.storageProvider}</li>
                         <li><strong>Database ID:</strong> {diagnosticsDetails.databaseId}</li>
                         <li><strong>Doc Firestore:</strong> {diagnosticsDetails.collectionDoc}</li>
                       </ul>
@@ -3274,7 +2948,7 @@ export default function AdminProductForm({
                   <div className="mt-6 pt-6 border-t border-slate-200/60 space-y-5">
                     <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider">📁 ARQUIVO PDF E CONFIGURAÇÃO GRÁTIS</h4>
                     <p className="text-xs text-slate-500 leading-relaxed">
-                      Como você selecionou a modalidade <strong>“Download Grátis”</strong>, envie o arquivo PDF correspondente abaixo. Ele ficará salvo de forma segura no Firebase Storage para as suas visitantes baixarem diretamente no site público.
+                      Como você selecionou a modalidade <strong>“Download Grátis”</strong>, envie o arquivo PDF correspondente abaixo. Ele ficará salvo de forma segura no Cloudflare R2 para as suas visitantes baixarem diretamente no site público.
                     </p>
                     {renderFreePdfUploadSection()}
                   </div>
