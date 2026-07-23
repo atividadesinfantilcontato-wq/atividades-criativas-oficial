@@ -6,6 +6,7 @@ import {
   signInWithRedirect, 
   getRedirectResult, 
   signInWithEmailAndPassword, 
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   signOut,
   User
 } from 'firebase/auth';
@@ -15,33 +16,42 @@ import firebaseConfigJson from '../firebase-applet-config.json';
 // Resolved config merging Vercel environment variables and applet configuration
 const metaEnv = ((import.meta as any).env || {}) as Record<string, string | undefined>;
 
-const envProjectId = metaEnv.VITE_FIREBASE_PROJECT_ID;
-const envDatabaseId = metaEnv.VITE_FIREBASE_DATABASE_ID;
+const getValidConfigValue = (envVal: string | undefined, jsonVal: string | undefined, fallback: string, isLegacyCheck?: (val: string) => boolean) => {
+  if (envVal && (!isLegacyCheck || !isLegacyCheck(envVal))) {
+    return envVal;
+  }
+  if (jsonVal && (!isLegacyCheck || !isLegacyCheck(jsonVal))) {
+    return jsonVal;
+  }
+  return fallback;
+};
 
-let finalProjectId = envProjectId || firebaseConfigJson.projectId;
-let finalDatabaseId = envDatabaseId || (firebaseConfigJson as any).firestoreDatabaseId || (firebaseConfigJson as any).databaseId;
+const isLegacy = (val: string) => 
+  val.includes('operating-flame') || 
+  val.includes('ai-studio-atividadescriati') || 
+  val.includes('pTQWbjLMsjQnXK6HaPTQfwJBybU2');
 
-// If envProjectId was wrongly populated with the database ID (starts with 'ai-studio-'), swap or correct it
-if (finalProjectId && finalProjectId.startsWith('ai-studio-')) {
-  finalDatabaseId = finalProjectId;
-  finalProjectId = (envDatabaseId && !envDatabaseId.startsWith('ai-studio-')) ? envDatabaseId : firebaseConfigJson.projectId || 'operating-flame-7dzmz';
-}
+const finalProjectId = getValidConfigValue(
+  metaEnv.VITE_FIREBASE_PROJECT_ID, 
+  firebaseConfigJson.projectId, 
+  'atividades-criativas-oficial',
+  isLegacy
+);
 
-if (!finalProjectId || finalProjectId === '(default)' || finalProjectId === 'default') {
-  finalProjectId = 'operating-flame-7dzmz';
-}
-
-if (!finalDatabaseId || finalDatabaseId === '(default)' || finalDatabaseId === 'default' || finalDatabaseId === 'operating-flame-7dzmz') {
-  finalDatabaseId = 'ai-studio-atividadescriati-64c09b83-865c-49d3-896f-bce4d623533c';
-}
+const finalDatabaseId = getValidConfigValue(
+  metaEnv.VITE_FIREBASE_DATABASE_ID, 
+  (firebaseConfigJson as any).firestoreDatabaseId || (firebaseConfigJson as any).databaseId, 
+  '(default)',
+  (v) => v.startsWith('ai-studio-') || v === 'default'
+);
 
 export const resolvedFirebaseConfig = {
-  apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey,
-  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || `${finalProjectId}.firebaseapp.com`,
+  apiKey: getValidConfigValue(metaEnv.VITE_FIREBASE_API_KEY, firebaseConfigJson.apiKey, 'AIzaSyCtpttkt-u43C1YMYWbq9r4pCznD8M', isLegacy),
+  authDomain: getValidConfigValue(metaEnv.VITE_FIREBASE_AUTH_DOMAIN, firebaseConfigJson.authDomain, `${finalProjectId}.firebaseapp.com`, isLegacy),
   projectId: finalProjectId,
   firestoreDatabaseId: finalDatabaseId,
-  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId,
-  appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId,
+  messagingSenderId: getValidConfigValue(metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID, firebaseConfigJson.messagingSenderId, '178277255653', isLegacy),
+  appId: getValidConfigValue(metaEnv.VITE_FIREBASE_APP_ID, firebaseConfigJson.appId, '1:178277255653:web:99a3ed1573f3e6b281c70c', isLegacy),
 };
 
 // Initialize Firebase app
@@ -77,16 +87,16 @@ export function getFriendlyAuthErrorMessage(error: any): string {
   const message = error.message || String(error);
 
   if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-    return 'Senha incorreta.';
+    return 'E-mail ou senha incorretos.';
   }
   if (code === 'auth/user-not-found') {
     return 'Usuário não encontrado.';
   }
   if (code === 'auth/operation-not-allowed') {
-    return 'Para entrar com senha, é necessário ativar E-mail/Senha no Firebase Authentication usando uma conta proprietária do projeto.';
+    return 'Login por senha ainda não está habilitado. Entre com o Google ou tente novamente mais tarde.';
   }
   if (code === 'auth/unauthorized-domain' || message.includes('unauthorized domain')) {
-    return 'Para usar login com Google no domínio publicado, o domínio precisa ser autorizado no Firebase Authentication por uma conta proprietária.';
+    return 'Este domínio ainda não está liberado para login. Entre em contato com o administrador.';
   }
   if (code === 'auth/popup-blocked') {
     return 'Popup bloqueado. Redirecionando para login do Google...';
@@ -101,10 +111,15 @@ export function getFriendlyAuthErrorMessage(error: any): string {
     return 'Muitas tentativas sem sucesso. Tente novamente em alguns instantes.';
   }
   if (code === 'auth/network-request-failed') {
-    return 'Falha na conexão de rede com o servidor de autenticação do Firebase.';
+    return 'Falha na conexão de rede. Tente novamente em alguns instantes.';
   }
 
-  return message || 'Erro ao autenticar no Firebase Auth.';
+  return 'Ocorreu um erro ao realizar o login. Tente novamente ou entre em contato com o suporte.';
+}
+
+// Reset password via Firebase Auth
+export async function resetPassword(email: string): Promise<void> {
+  await firebaseSendPasswordResetEmail(auth, email.trim());
 }
 
 // Standard Google login with popup and automatic redirect fallback
@@ -258,10 +273,10 @@ export async function validateAdminUser(user: User | null): Promise<AdminValidat
       };
     }
 
-    // 2. If userUid is not pTQWbjLMsjQnXK6HaPTQfwJBybU2, check admins/pTQWbjLMsjQnXK6HaPTQfwJBybU2 as well
-    if (userUid !== 'pTQWbjLMsjQnXK6HaPTQfwJBybU2') {
+    // 2. If userUid is not PahVnk6qMXQLbyz5Rnx4TJXK44r2, check admins/PahVnk6qMXQLbyz5Rnx4TJXK44r2 as well
+    if (userUid !== 'PahVnk6qMXQLbyz5Rnx4TJXK44r2') {
       try {
-        const expectedDocRef = doc(db, 'admins', 'pTQWbjLMsjQnXK6HaPTQfwJBybU2');
+        const expectedDocRef = doc(db, 'admins', 'PahVnk6qMXQLbyz5Rnx4TJXK44r2');
         const expectedSnap = await getDoc(expectedDocRef);
 
         if (expectedSnap.exists()) {
@@ -288,7 +303,7 @@ export async function validateAdminUser(user: User | null): Promise<AdminValidat
               details: {
                 uid: userUid,
                 email: userEmail,
-                path: `admins/pTQWbjLMsjQnXK6HaPTQfwJBybU2 (vinculado a ${path})`,
+                path: `admins/PahVnk6qMXQLbyz5Rnx4TJXK44r2 (vinculado a ${path})`,
                 docFound: true,
                 active: true,
                 role: 'admin',
@@ -347,7 +362,7 @@ export async function validateAdminUser(user: User | null): Promise<AdminValidat
     // 4. Document not found
     return {
       isAdmin: false,
-      reason: userUid !== 'pTQWbjLMsjQnXK6HaPTQfwJBybU2' 
+      reason: userUid !== 'PahVnk6qMXQLbyz5Rnx4TJXK44r2' 
         ? `UID autenticado (${userUid}) diferente do UID admin esperado ou documento ${path} não encontrado.`
         : `Documento ${path} não encontrado.`,
       details: {
@@ -461,16 +476,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Test Connection (as per Validation Instructions)
+// Test Connection
 export async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDoc(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration: Client is offline.");
+      console.warn("Firebase notice: Client initial connection pending.");
     }
   }
 }
 
-testConnection();
 

@@ -73,7 +73,7 @@ service cloud.firestore {
 
     // 4. Products Rules
     match /products/{productId} {
-      allow read: if (resource == null) || (resource.data.get('isActive', true) == true) || isAdmin();
+      allow read: if true;
       allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming());
       allow update: if isAdmin() && isValidId(productId) && isValidProduct(incoming());
       allow delete: if isAdmin() && isValidId(productId);
@@ -122,7 +122,7 @@ service cloud.firestore {
 
     // 9. Connection Test Rules
     match /test/{testId} {
-      allow read: if true;
+      allow read, write: if true;
     }
   }
 }

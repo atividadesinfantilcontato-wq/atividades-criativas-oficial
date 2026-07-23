@@ -55,8 +55,6 @@ export default function Footer({
             <div 
               className="flex items-center gap-2 cursor-pointer group select-none" 
               onClick={handleScrollTop}
-              onDoubleClick={() => onAdminTrigger?.()}
-              title="Dê dois cliques para acessar o painel administrativo"
             >
               {siteConfig?.logoUrl ? (
                 <img 
@@ -108,14 +106,14 @@ export default function Footer({
               </div>
             )}
             
-            {/* Hidden admin trigger below the rapid download text and badges */}
+            {/* Discrete admin trigger */}
             <div className="mt-2 min-h-[20px]">
               <button
                 onClick={() => onAdminTrigger?.()}
-                className="opacity-0 hover:opacity-100 focus:opacity-100 transition-opacity duration-300 text-[10px] text-slate-400 hover:text-[#37C76A] bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-xl cursor-pointer font-bold uppercase tracking-wider select-none"
-                title="Área Administrativa"
+                className="opacity-20 hover:opacity-100 transition-opacity duration-300 text-slate-400 hover:text-white p-1 cursor-pointer select-none"
+                aria-label="Acesso"
               >
-                Admin
+                <Lock size={12} />
               </button>
             </div>
           </div>
@@ -305,9 +303,7 @@ export default function Footer({
         {/* Legal and Disclaimer bottom */}
         <div className="border-t border-white/10 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-[10px] text-slate-400 font-bold">
           <div 
-            className="text-center sm:text-left leading-relaxed cursor-pointer select-none"
-            onDoubleClick={() => onAdminTrigger?.()}
-            title="Dê dois cliques aqui para acessar o painel"
+            className="text-center sm:text-left leading-relaxed select-none"
           >
             <p>© {new Date().getFullYear()} Atividades Criativas Oficial. Todos os direitos reservados.</p>
             <p className="mt-1">
@@ -321,9 +317,10 @@ export default function Footer({
                   e.stopPropagation();
                   onAdminTrigger?.();
                 }}
-                className="text-slate-300 hover:text-[#37C76A] underline cursor-pointer font-bold tracking-wider"
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer p-0.5 inline-flex items-center opacity-30 hover:opacity-100"
+                aria-label="Acesso"
               >
-                Administração
+                <Lock size={11} />
               </button>
             </p>
           </div>
