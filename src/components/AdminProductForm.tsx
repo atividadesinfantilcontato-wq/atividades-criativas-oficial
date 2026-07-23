@@ -798,6 +798,7 @@ export default function AdminProductForm({
     let finalId = editingProductId || currentGeneratedId || `custom-kit-${Date.now()}`;
     let tempStoragePath = '';
     let currentStepDiagnostic = 'Verificação de Autenticação e Permissão Admin';
+    let currentSession: any = null;
 
     try {
       isSaveCancelledRef.current = false;
@@ -807,6 +808,7 @@ export default function AdminProductForm({
       if (isSaveCancelledRef.current) return;
       
       const session = await getCurrentAdminSession();
+      currentSession = session;
       if (!session || !session.isAdmin) {
         throw new Error("AUTH_SESSION_EXPIRED: Nenhum usuário logado no painel.");
       }
@@ -1024,12 +1026,7 @@ export default function AdminProductForm({
       if (isSaveCancelledRef.current) return;
       console.error("[Diagnostic] Error saving product in handleSaveProduct:", error);
       let friendlyMsg = error instanceof Error ? error.message : String(error);
-      
-      if (!isDevOrPreview) {
-        friendlyMsg = "Não foi possível concluir. Entre novamente e tente outra vez.";
-      } else {
-        friendlyMsg = `Travou na etapa: ${currentStepDiagnostic}. (${friendlyMsg})`;
-      }
+      friendlyMsg = `Travou na etapa: ${currentStepDiagnostic}. (${friendlyMsg})`;
 
       // Populate diagnosticsDetails
       const fileSizeStr = newMainImageFile 
@@ -1052,9 +1049,9 @@ export default function AdminProductForm({
         filetype: newMainImageFile?.type || 'Nenhuma imagem',
         filesize: fileSizeStr,
         storagePath: tempStoragePath || 'Nenhum caminho gerado (falhou antes)',
-        uid: auth.currentUser?.uid || 'Nenhum usuário logado',
-        email: auth.currentUser?.email || 'Nenhum e-mail',
-        isAdmin: adminCheckResult.status === 'valid',
+        uid: currentSession?.uid || auth.currentUser?.uid || 'Nenhum usuário logado',
+        email: currentSession?.email || auth.currentUser?.email || 'Nenhum e-mail',
+        isAdmin: currentSession?.isAdmin || adminCheckResult.status === 'valid',
         storageProvider: 'Cloudflare R2',
         databaseId: (firebaseConfig as any).firestoreDatabaseId || 'Não configurado',
         collectionDoc: `products/${finalId}`,
@@ -2631,15 +2628,13 @@ export default function AdminProductForm({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
-                  {isDevOrPreview && (
-                    <button
-                      type="button"
-                      onClick={() => setShowDiagnosticsPanel(!showDiagnosticsPanel)}
-                      className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-bold text-xs transition-all cursor-pointer uppercase tracking-wider"
-                    >
-                      {showDiagnosticsPanel ? 'Ocultar Diagnóstico' : 'Detalhes do Diagnóstico'}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnosticsPanel(!showDiagnosticsPanel)}
+                    className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-bold text-xs transition-all cursor-pointer uppercase tracking-wider"
+                  >
+                    {showDiagnosticsPanel ? 'Ocultar Diagnóstico' : 'Detalhes do Diagnóstico'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setPersistentError(null)}
@@ -2661,7 +2656,7 @@ export default function AdminProductForm({
               </div>
 
               {/* DIAGNOSTICS DISPLAY PANEL */}
-              {isDevOrPreview && showDiagnosticsPanel && diagnosticsDetails && (
+              {showDiagnosticsPanel && diagnosticsDetails && (
                 <div className="border-t border-red-200/60 pt-4 mt-2 space-y-3">
                   <div className="flex items-center justify-between border-b border-red-200/40 pb-2">
                     <span className="text-xs font-black uppercase text-red-700 tracking-wider flex items-center gap-1.5">
@@ -3417,7 +3412,7 @@ export default function AdminProductForm({
                   <p className="text-red-600 text-sm font-semibold mt-2 leading-relaxed">
                     {saveError}
                   </p>
-                  {isDevOrPreview && diagnosticsText && (
+                  {diagnosticsText && (
                     <details className="mt-4 text-left bg-slate-50 p-3 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
                       <summary className="text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none">Detalhes do Diagnóstico</summary>
                       <pre className="text-[9px] font-mono text-slate-500 mt-2 whitespace-pre-wrap leading-tight">
