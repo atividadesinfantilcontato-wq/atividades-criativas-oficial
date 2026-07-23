@@ -12,6 +12,7 @@ import ProductImage from './ProductImage';
 import { doc, setDoc, getDoc, collection, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth, app, resolvedFirebaseConfig } from '../firebase';
+import { getCurrentAdminSession } from '../utils/adminAuth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface AdminProductFormProps {
@@ -93,6 +94,7 @@ export default function AdminProductForm({
   const [uploadProgressText, setUploadProgressText] = useState('');
 
   // --- Nossos novos estados de suporte a salvamento resiliente ---
+  const isDevOrPreview = typeof window !== 'undefined' && (window.location.hostname.includes('localhost') || window.location.hostname.includes('run.app') || window.location.hostname.includes('127.0.0.1'));
   const [isSaving, setIsSaving] = useState(false);
   const [saveProgressPercent, setSaveProgressPercent] = useState(0);
   const [diagnosticsText, setDiagnosticsText] = useState('');
@@ -235,95 +237,24 @@ export default function AdminProductForm({
 
   useEffect(() => {
     let active = true;
-    const checkAdmin = async (currentUser?: User | null) => {
-      const user = currentUser !== undefined ? currentUser : auth.currentUser;
-      if (!user) {
-        const isLocalLoggedIn = localStorage.getItem('atividades_oficial_logged_in') === 'true';
-        if (active) {
-          if (isLocalLoggedIn) {
-            setAdminCheckResult({
-              status: 'valid',
-              email: 'atividadesinfantilcontato@gmail.com',
-              uid: 'PahVnk6qMXQLbyz5Rnx4TJXK44r2',
-              role: 'admin',
-              active: true
-            });
-          } else {
-            setAdminCheckResult({ status: 'no_user' });
-          }
-        }
-        return;
-      }
+    const checkAdmin = async () => {
       try {
-        if (active) setAdminCheckResult({ status: 'checking', email: user.email || '', uid: user.uid });
-        const docRef = doc(db, 'admins', user.uid);
-        let snap = await getDoc(docRef);
-        
-        let hasValidDoc = false;
-        let role = '';
-        let docActive = false;
-
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data && data.role === 'admin' && data.active === true) {
-            hasValidDoc = true;
-            role = data.role;
-            docActive = data.active;
-          }
-        }
-
-        // Auto-provision if superadmin email is logged in but missing valid firestore doc
-        if (!hasValidDoc && user.email === 'atividadesinfantilcontato@gmail.com') {
-          try {
-            const now = new Date().toISOString();
-            await setDoc(docRef, {
-              role: 'admin',
-              active: true,
-              email: user.email,
-              createdAt: now,
-              updatedAt: now
-            });
-            hasValidDoc = true;
-            role = 'admin';
-            docActive = true;
-            snap = await getDoc(docRef);
-          } catch (writeErr) {
-            console.error("Failed to automatically provision admin doc:", writeErr);
-          }
-        }
-
-        if (!active) return;
-
-        if (hasValidDoc) {
+        const session = await getCurrentAdminSession();
+        if (active && session.isAdmin) {
           setAdminCheckResult({
             status: 'valid',
-            email: user.email || '',
-            uid: user.uid,
-            role: role,
-            active: docActive
-          });
-        } else if (snap.exists()) {
-          const data = snap.data();
-          setAdminCheckResult({
-            status: 'invalid_fields',
-            email: user.email || '',
-            uid: user.uid,
-            role: data?.role,
-            active: data?.active
-          });
-        } else {
-          setAdminCheckResult({
-            status: 'no_doc',
-            email: user.email || '',
-            uid: user.uid
+            email: session.email,
+            uid: session.uid,
+            role: 'admin',
+            active: true
           });
         }
       } catch (err: any) {
         if (active) {
           setAdminCheckResult({
             status: 'error',
-            email: user.email || '',
-            uid: user.uid,
+            email: '',
+            uid: '',
             errorMsg: err.message || String(err)
           });
         }
@@ -331,8 +262,8 @@ export default function AdminProductForm({
     };
 
     checkAdmin();
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      checkAdmin(user);
+    const unsubscribe = onAuthStateChanged(auth, () => {
+      checkAdmin();
     });
     return () => {
       active = false;
@@ -748,12 +679,20 @@ export default function AdminProductForm({
       throw new Error("Vídeos devem ser cadastrados apenas por URL do YouTube.");
     }
 
-    const user = auth.currentUser;
-    if (!user) {
-      throw new Error("Você precisa estar logado como administrador.");
+    const session = await getCurrentAdminSession();
+    let idToken = session.token;
+    if (session.user) {
+      try {
+        idToken = await session.user.getIdToken(false);
+      } catch (e) {
+        idToken = session.token;
+      }
     }
 
-    const idToken = await user.getIdToken();
+    if (!idToken) {
+      throw new Error("Sessão expirada. Faça login novamente no painel para realizar uploads no R2.");
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("customPath", customPath);
@@ -867,53 +806,9 @@ export default function AdminProductForm({
       logDiagnostic(1, 'arquivo validado e autenticação confirmada');
       if (isSaveCancelledRef.current) return;
       
-      const user = auth.currentUser;
-      if (!user) {
+      const session = await getCurrentAdminSession();
+      if (!session || !session.isAdmin) {
         throw new Error("AUTH_SESSION_EXPIRED: Nenhum usuário logado no painel.");
-      }
-      
-      if (user.email !== 'atividadesinfantilcontato@gmail.com') {
-        throw new Error(`EMAIL_NOT_ADMIN: O e-mail logado (${user.email}) não corresponde ao e-mail de administrador cadastrado.`);
-      }
-
-      const adminDocRef = doc(db, 'admins', user.uid);
-      const getAdminDocPromise = getDoc(adminDocRef);
-      let adminSnap = await withTimeout(getAdminDocPromise, 10000, "Verificando documento admins no Firestore");
-      if (isSaveCancelledRef.current) return;
-      
-      let hasValidDoc = false;
-      if (adminSnap.exists()) {
-        const data = adminSnap.data();
-        if (data && data.role === 'admin' && data.active === true) {
-          hasValidDoc = true;
-        }
-      }
-
-      if (!hasValidDoc && user.email === 'atividadesinfantilcontato@gmail.com') {
-        try {
-          await withTimeout(setDoc(adminDocRef, {
-            role: 'admin',
-            active: true,
-            email: user.email,
-            updatedAt: new Date().toISOString()
-          }), 10000, "Gravação automática de admins");
-          if (isSaveCancelledRef.current) return;
-          hasValidDoc = true;
-          const getAdminDocPromiseRetry = getDoc(adminDocRef);
-          adminSnap = await withTimeout(getAdminDocPromiseRetry, 10000, "Verificando documento admins recém-criado no Firestore");
-        } catch (writeErr) {
-          console.error("Failed to auto-provision admin doc in handleSaveProduct:", writeErr);
-        }
-      }
-
-      if (isSaveCancelledRef.current) return;
-
-      if (!hasValidDoc) {
-        if (!adminSnap.exists()) {
-          throw new Error("NO_ADMIN_DOCUMENT: Usuário autenticado, mas sem documento de administrador.");
-        } else {
-          throw new Error("USER_NOT_ADMIN_ACTIVE: O documento admins existe mas não possui role 'admin' ou não está ativo.");
-        }
       }
 
       // 2. Validação concluída
@@ -1130,7 +1025,11 @@ export default function AdminProductForm({
       console.error("[Diagnostic] Error saving product in handleSaveProduct:", error);
       let friendlyMsg = error instanceof Error ? error.message : String(error);
       
-      friendlyMsg = `Travou na etapa: ${currentStepDiagnostic}. (${friendlyMsg})`;
+      if (!isDevOrPreview) {
+        friendlyMsg = "Não foi possível concluir. Entre novamente e tente outra vez.";
+      } else {
+        friendlyMsg = `Travou na etapa: ${currentStepDiagnostic}. (${friendlyMsg})`;
+      }
 
       // Populate diagnosticsDetails
       const fileSizeStr = newMainImageFile 
@@ -1177,6 +1076,7 @@ export default function AdminProductForm({
     setFeaturedProductError(null);
     setFeaturedSaveSuccess(false);
     try {
+      await getCurrentAdminSession();
       // 1. Update Firestore siteConfig/global document
       const docRef = doc(db, 'siteConfig', 'global');
       const snap = await getDoc(docRef);
@@ -2731,13 +2631,15 @@ export default function AdminProductForm({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setShowDiagnosticsPanel(!showDiagnosticsPanel)}
-                    className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-bold text-xs transition-all cursor-pointer uppercase tracking-wider"
-                  >
-                    {showDiagnosticsPanel ? 'Ocultar Diagnóstico' : 'Detalhes do Diagnóstico'}
-                  </button>
+                  {isDevOrPreview && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDiagnosticsPanel(!showDiagnosticsPanel)}
+                      className="px-4 py-2.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-bold text-xs transition-all cursor-pointer uppercase tracking-wider"
+                    >
+                      {showDiagnosticsPanel ? 'Ocultar Diagnóstico' : 'Detalhes do Diagnóstico'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setPersistentError(null)}
@@ -2759,7 +2661,7 @@ export default function AdminProductForm({
               </div>
 
               {/* DIAGNOSTICS DISPLAY PANEL */}
-              {showDiagnosticsPanel && diagnosticsDetails && (
+              {isDevOrPreview && showDiagnosticsPanel && diagnosticsDetails && (
                 <div className="border-t border-red-200/60 pt-4 mt-2 space-y-3">
                   <div className="flex items-center justify-between border-b border-red-200/40 pb-2">
                     <span className="text-xs font-black uppercase text-red-700 tracking-wider flex items-center gap-1.5">
@@ -3515,7 +3417,7 @@ export default function AdminProductForm({
                   <p className="text-red-600 text-sm font-semibold mt-2 leading-relaxed">
                     {saveError}
                   </p>
-                  {diagnosticsText && (
+                  {isDevOrPreview && diagnosticsText && (
                     <details className="mt-4 text-left bg-slate-50 p-3 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
                       <summary className="text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none">Detalhes do Diagnóstico</summary>
                       <pre className="text-[9px] font-mono text-slate-500 mt-2 whitespace-pre-wrap leading-tight">
@@ -3785,6 +3687,7 @@ export default function AdminProductForm({
                 onClick={async () => {
                   if (deletingProductId) {
                     try {
+                      const session = await getCurrentAdminSession();
                       const docRef = doc(db, 'products', deletingProductId);
                       await updateDoc(docRef, {
                         isDeleted: true,
@@ -3796,7 +3699,7 @@ export default function AdminProductForm({
                         isKit: false,
                         isFree: false,
                         deletedAt: new Date().toISOString(),
-                        deletedBy: auth.currentUser?.email || 'admin'
+                        deletedBy: session.email || 'admin'
                       });
                       
                       setShowDeleteModal(false);
